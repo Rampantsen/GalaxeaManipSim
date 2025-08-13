@@ -1,5 +1,5 @@
 <!-- TITLE & BADGES -->
-# 🤖 Galaxea RoboTwin
+# 🤖 Galaxea Manipulation Simulator
 
 <p align="center">
   <img src="assets/webp/R1LiteShoePlace/solution.webp" alt="R1Lite" width="30%">
@@ -18,7 +18,7 @@
   </a>
 </p>
 
-Galaxea **RoboTwin** provides **simulation benchmarks**, **expert demonstration pipelines**, and **baseline policies** for the **Galaxea R1 series** (R1, R1 Pro, R1 Lite).  
+Galaxea Manipulation Simulator provides **simulation benchmarks**, **expert demonstration pipelines**, and **baseline policies** for the **Galaxea R1 series** (R1, R1 Pro, R1 Lite).  
 Use it to **collect high-quality demos**, **convert them to [LeRobot](https://github.com/huggingface/lerobot) datasets**, and **train / evaluate Diffusion Policies** with minimal overhead.
 
 
@@ -43,8 +43,8 @@ Use it to **collect high-quality demos**, **convert them to [LeRobot](https://gi
 Note: If installing together with Galaxea-DP, please refer to this [link]()
 ```
 # Create conda environment
-conda create -n galaxea-robotwin python=3.10 -y
-conda activate galaxea-robotwin
+conda create -n galaxea-sim python=3.10 -y
+conda activate galaxea-sim
 pip install -e .
 
 # Install lerobot
@@ -108,27 +108,27 @@ Note: Replay demonstrations will pass the recorded end effector's pose trajector
 ## 🛠  Train Policies
 
 ### 1. Convert Demos to LeRobot Dataset
-If you want to use Galaxea Diffusion Policy implementation, just replace the script name as `convert_single_galaxea_robotwin_to_lerobot_opendp`. If the controller is bimanual_relaxed_ik, please add `--use_eef`.
+If you want to use Galaxea Diffusion Policy implementation, just replace the script name as `convert_single_galaxea_sim_to_lerobot_opendp`. If the controller is bimanual_relaxed_ik, please add `--use_eef`.
 
 ```
-# If you want to use Lerobot Diffusion Policy implementation, please use script convert_single_galaxea_robotwin_to_lerobot
+# If you want to use Lerobot Diffusion Policy implementation, please use script convert_single_galaxea_sim_to_lerobot
 # For Joint Control
 # Example of R1 Picking up Bottles 
-python -m galaxea_sim.scripts.convert_single_galaxea_robotwin_to_lerobot --task R1DualBottlesPickEasy --tag final --robot r1
+python -m galaxea_sim.scripts.convert_single_galaxea_sim_to_lerobot --task R1DualBottlesPickEasy --tag final --robot r1
 
 # Example of R1 Pro Stacking Blocks
-python -m galaxea_sim.scripts.convert_single_galaxea_robotwin_to_lerobot --task R1ProBlocksStackEasy --tag final --robot r1_pro
+python -m galaxea_sim.scripts.convert_single_galaxea_sim_to_lerobot --task R1ProBlocksStackEasy --tag final --robot r1_pro
 
 # Example of R1 Lite Stacking Blocks
-python -m galaxea_sim.scripts.convert_single_galaxea_robotwin_to_lerobot --task R1LiteBlocksStackEasy --tag final --robot r1_lite
+python -m galaxea_sim.scripts.convert_single_galaxea_sim_to_lerobot --task R1LiteBlocksStackEasy --tag final --robot r1_lite
 
 
 # For End Effector Control
 # Example of R1 Pro Picking up Bottles 
-python -m galaxea_sim.scripts.convert_single_galaxea_robotwin_to_lerobot --robot r1_pro --task R1ProDualBottlesPickEasy --tag final --use_eef
+python -m galaxea_sim.scripts.convert_single_galaxea_sim_to_lerobot --robot r1_pro --task R1ProDualBottlesPickEasy --tag final --use_eef
 
 # Example of R1 Pro Stacking Blocks 
-python -m galaxea_sim.scripts.convert_single_galaxea_robotwin_to_lerobot --robot r1_pro --task R1ProBlocksStackEasy --tag final --use_eef
+python -m galaxea_sim.scripts.convert_single_galaxea_sim_to_lerobot --robot r1_pro --task R1ProBlocksStackEasy --tag final --use_eef
 ```
 
 Note: An optional argument `--use_video` makes lerobot storage image data by encoding them into video, which has smaller file size and can be directly played. It requires ffmpeg installed, and you may want to change vcodec to "libh264" in `.../site-packages/lerobot/common/datasets/video_utils.py` if default "libsvtav1" is not available.
@@ -244,8 +244,9 @@ Our code is generally built on top of amazing open-source projects:
 
 If you find our work useful, please consider citing:
 ```
-@inproceedings{GalaxeaRobotwin,
-  title={Galaxea RoboTwin},
+@inproceedings{GalaxeaManipSim,
+  title={Galaxea Manipulation Simulator},
   author={Galaxea Team},
   year={2025}
 }
+```
