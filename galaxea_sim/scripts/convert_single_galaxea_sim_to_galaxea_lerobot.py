@@ -1,6 +1,5 @@
 import shutil
 
-from lerobot.datasets.lerobot_dataset import HF_LEROBOT_HOME
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from typing import Literal
 import tyro
@@ -9,21 +8,26 @@ import h5py
 import numpy as np
 import cv2
 
-REPO_PREFIX = "galaxea"
+REPO_PREFIX = ""
 
-def main(task: str, data_dir: str = "datasets", tag: str | None = None, robot: Literal['r1', 'r1_pro', 'r1_lite'] = 'r1', use_eef: bool = False, use_video: bool = False, push_to_hub: bool = False):
-    output_path = HF_LEROBOT_HOME / REPO_PREFIX / f"{task}"
-    print(f"Output path: {output_path}")
-    if output_path.exists():
-        shutil.rmtree(output_path)
+def main(
+    task: str, 
+    dataset_dir: str = "datasets", 
+    tag: str | None = None, 
+    robot: Literal['r1', 'r1_pro', 'r1_lite'] = 'r1', 
+    use_eef: bool = False, 
+    use_video: bool = False, 
+    push_to_hub: bool = False
+):
     shape = (224, 224, 3)  # Resize images to 224x224
     depth_shape = (224, 224) # Resize depth to 224x224
     arm_dof = 7 if (robot == 'r1_pro' or use_eef) else 6
     if use_eef:
         dataset = LeRobotDataset.create(
-            repo_id=f"{REPO_PREFIX}/{output_path.name}",
+            repo_id=task,
             robot_type=robot,
             fps=15,
+            root=f"{dataset_dir}/{task}/lerobot", 
             features={
                 "observation.images.head_rgb":        {"dtype": "image" if not use_video else "video",
                                                     "shape": shape,
@@ -52,9 +56,10 @@ def main(task: str, data_dir: str = "datasets", tag: str | None = None, robot: L
         )
     elif not use_eef:
         dataset = LeRobotDataset.create(
-            repo_id=f"{REPO_PREFIX}/{output_path.name}",
+            repo_id=task,
             robot_type=robot,
             fps=15,
+            root=f"{dataset_dir}/{task}/lerobot", 
             features={
                 "observation.images.head_rgb":        {"dtype": "image" if not use_video else "video",
                                                     "shape": shape,
@@ -83,9 +88,9 @@ def main(task: str, data_dir: str = "datasets", tag: str | None = None, robot: L
         )
     for raw_dataset_name in [task]:
         if tag:
-            h5_paths = glob.glob(f"{data_dir}/{raw_dataset_name}/{tag}/*.h5", recursive=True)
+            h5_paths = glob.glob(f"{dataset_dir}/{raw_dataset_name}/{tag}/*.h5", recursive=True)
         else:
-            h5_paths = glob.glob(f"{data_dir}/{raw_dataset_name}/**/*.h5", recursive=True)
+            h5_paths = glob.glob(f"{dataset_dir}/{raw_dataset_name}/**/*.h5", recursive=True)
         for h5_path in h5_paths:
             with h5py.File(h5_path, 'r') as f:
                 rgb_head = f['upper_body_observations']['rgb_head'][()]
@@ -172,7 +177,7 @@ def main(task: str, data_dir: str = "datasets", tag: str | None = None, robot: L
                             task=raw_dataset_name,
                         )
             dataset.save_episode()            
-    print(f"Dataset {output_path.name} created successfully with {len(dataset)} frames.")
+    print(f"Dataset {f'{dataset_dir}/{task}/lerobot'} created successfully with {len(dataset)} frames.")
     # Optionally push to the Hugging Face Hub
     if push_to_hub:
         raise NotImplementedError("Pushing to the Hugging Face Hub is not supported yet.")
