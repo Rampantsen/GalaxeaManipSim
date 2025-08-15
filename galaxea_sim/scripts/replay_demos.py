@@ -14,7 +14,15 @@ from galaxea_sim.envs.base.bimanual_manipulation import BimanualManipulationEnv
 from galaxea_sim.utils.data_utils import save_dict_list_to_hdf5, save_dict_list_to_json 
 import json
 
-def main(env_name: str, num_demos: int = 100, dataset_dir: str = 'datasets', target_controller_type: str = 'bimanual_relaxed_ik', control_freq: int = 15, headless: bool = True, ray_tracing: bool = False):
+def main(
+    env_name: str, 
+    num_demos: int = 100, 
+    dataset_dir: str = 'datasets', 
+    target_controller_type: str = 'bimanual_relaxed_ik', 
+    control_freq: int = 15, 
+    headless: bool = True, 
+    ray_tracing: bool = False
+):
     env = gym.make(
         env_name,
         control_freq=control_freq,
@@ -23,7 +31,7 @@ def main(env_name: str, num_demos: int = 100, dataset_dir: str = 'datasets', tar
         ray_tracing=ray_tracing,
     )
     assert isinstance(env.unwrapped, BimanualManipulationEnv)
-    save_dir = Path(dataset_dir) / env_name / "test"
+    save_dir = Path(dataset_dir) / env_name / "replayed"
     source_dir = Path(dataset_dir) / env_name
     meta_info_path = Path(source_dir) / "meta_info.json"
     h5_paths = list(Path(source_dir).glob("*/*.h5")) # except for final in the source_dir
@@ -39,13 +47,13 @@ def main(env_name: str, num_demos: int = 100, dataset_dir: str = 'datasets', tar
     pbar = tqdm.tqdm(total=num_demos, desc="Collecting demos")
 
 
-    # --- 新增：统计已经存在的 demo 数量 ------------------
+    # get existing demo h5
     existing = sorted(save_dir.glob("demo_*.h5"))
     num_collected = len(existing)
     pbar = tqdm.tqdm(total=num_demos, initial=num_collected,
                     desc="Collecting demos")
 
-    # 跳过已经采过的 h5 文件
+    # skip h5 that has already been processed
     processed = {int(p.stem.split("_")[-1]) for p in existing}
     h5_paths = [p for p in h5_paths
                 if int(p.stem.split("_")[-1]) not in processed]

@@ -13,7 +13,16 @@ from galaxea_sim.envs.base.bimanual_manipulation import BimanualManipulationEnv
 from galaxea_sim.planners.bimanual import BimanualPlanner
 from galaxea_sim.utils.data_utils import save_dict_list_to_hdf5, save_dict_list_to_json 
 
-def main(env_name: str, num_demos: int = 100, datasets_dir: str = 'datasets', control_freq: int = 15, headless: bool = True, obs_mode: Literal['state', 'image'] = 'state', tag: Optional[str] = None, ray_tracing: bool = False):
+def main(
+    env_name: str, 
+    num_demos: int = 100, 
+    dataset_dir: str = 'datasets', 
+    control_freq: int = 15, 
+    headless: bool = True, 
+    obs_mode: Literal['state', 'image'] = 'state', 
+    tag: Optional[str] = 'collected', 
+    ray_tracing: bool = False
+):
     env = gym.make(
         env_name,
         control_freq=control_freq,
@@ -30,10 +39,8 @@ def main(env_name: str, num_demos: int = 100, datasets_dir: str = 'datasets', co
         active_joint_names=env.unwrapped.active_joint_names,
         control_freq=env.unwrapped.control_freq,
     )
-    if tag is not None:
-        save_dir = Path(datasets_dir) / env_name / tag
-    else:
-        save_dir = Path(datasets_dir) / env_name / datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+
+    save_dir = Path(dataset_dir) / env_name / tag
     num_collected = 0
     num_tries = 0
     meta_info_list = []
