@@ -161,14 +161,19 @@ class BlocksStackEasyEnv(RoboTwinBaseEnv):
                     pose0 = list(
                         self.robot.right_ee_link.get_entity_pose().p + [0, 0, 0.05]
                     ) + list(self.robot.right_ee_link.get_entity_pose().q)
-                    substeps.append(("move_to_pose", {"right_pose": pose0}))
+                    substeps.append(
+                        ("move_to_pose_traj_augmented", {"right_pose": pose0})
+                    )
                 substeps.append(
-                    ("move_to_pose", {"right_pose": deepcopy(pre_grasp_pose)})
+                    (
+                        "move_to_pose_traj_augmented",
+                        {"right_pose": deepcopy(pre_grasp_pose)},
+                    )
                 )
             else:
                 substeps.append(
                     (
-                        "move_to_pose",
+                        "move_to_pose_traj_augmented",
                         {
                             "right_pose": pre_grasp_pose,
                             "left_pose": self.robot.left_init_ee_pose,
@@ -182,14 +187,19 @@ class BlocksStackEasyEnv(RoboTwinBaseEnv):
                     pose0 = list(
                         self.robot.left_ee_link.get_entity_pose().p + [0, 0, 0.05]
                     ) + list(self.robot.left_ee_link.get_entity_pose().q)
-                    substeps.append(("move_to_pose", {"left_pose": pose0}))
+                    substeps.append(
+                        ("move_to_pose_traj_augmented", {"left_pose": pose0})
+                    )
                 substeps.append(
-                    ("move_to_pose", {"left_pose": deepcopy(pre_grasp_pose)})
+                    (
+                        "move_to_pose_traj_augmented",
+                        {"left_pose": deepcopy(pre_grasp_pose)},
+                    )
                 )
             else:
                 substeps.append(
                     (
-                        "move_to_pose",
+                        "move_to_pose_traj_augmented",
                         {
                             "left_pose": pre_grasp_pose,
                             "right_pose": self.robot.right_init_ee_pose,
@@ -199,16 +209,32 @@ class BlocksStackEasyEnv(RoboTwinBaseEnv):
 
         substeps.append(("open_gripper", {"action_mode": now_arm}))
         pre_grasp_pose[2] -= 0.15
-        substeps.append(("move_to_pose", {f"{now_arm}_pose": deepcopy(pre_grasp_pose)}))
+        substeps.append(
+            (
+                "move_to_pose_traj_augmented",
+                {f"{now_arm}_pose": deepcopy(pre_grasp_pose)},
+            )
+        )
         substeps.append(("close_gripper", {"action_mode": now_arm}))
         pre_grasp_pose[2] += 0.15
-        substeps.append(("move_to_pose", {f"{now_arm}_pose": deepcopy(pre_grasp_pose)}))
-        substeps.append(("move_to_pose", {f"{now_arm}_pose": deepcopy(target_pose)}))
+        substeps.append(
+            (
+                "move_to_pose_traj_augmented",
+                {f"{now_arm}_pose": deepcopy(pre_grasp_pose)},
+            )
+        )
+        substeps.append(
+            ("move_to_pose_traj_augmented", {f"{now_arm}_pose": deepcopy(target_pose)})
+        )
         target_pose[2] -= 0.05
-        substeps.append(("move_to_pose", {f"{now_arm}_pose": deepcopy(target_pose)}))
+        substeps.append(
+            ("move_to_pose_traj_augmented", {f"{now_arm}_pose": deepcopy(target_pose)})
+        )
         substeps.append(("open_gripper", {"action_mode": now_arm}))
         target_pose[2] += 0.1
-        substeps.append(("move_to_pose", {f"{now_arm}_pose": deepcopy(target_pose)}))
+        substeps.append(
+            ("move_to_pose_traj_augmented", {f"{now_arm}_pose": deepcopy(target_pose)})
+        )
 
         return substeps, now_arm
 
