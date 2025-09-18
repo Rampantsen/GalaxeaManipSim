@@ -75,3 +75,4 @@ replay.sh
 *.egg-info
 assets/raw
 assets/raw_webp
+assets/robotwin_models
