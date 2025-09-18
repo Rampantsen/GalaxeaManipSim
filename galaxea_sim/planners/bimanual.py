@@ -221,7 +221,7 @@ class BimanualPlanner(BasePlanner):
 
         # Determine number of waypoints if not specified
         if num_waypoints is None:
-            num_waypoints = np.random.randint(1, 4)  # 1 to 3 waypoints
+            num_waypoints = np.random.randint(2, 4)  # 1 to 3 waypoints
 
         # Process left arm trajectory if exists
         if left_result is not None and left_result["position"].shape[0] > 0:
@@ -290,9 +290,9 @@ class BimanualPlanner(BasePlanner):
         m = max(1, min(m, max_mid)) if max_mid > 0 else 0
         if m == 0:
             return arm_result
-        mid_indices = np.sort(
-            np.random.choice(np.arange(1, num_steps - 1), size=m, replace=False)
-        )
+        # Uniformly spaced waypoint indices (exclude start=0 and end=num_steps-1)
+        mid_indices = np.linspace(1, num_steps - 2, num=m, dtype=int)
+        mid_indices = np.unique(mid_indices)
         waypoint_indices = np.concatenate([[0], mid_indices, [num_steps - 1]])
 
         # Copy and perturb intermediate waypoints (only last K dims)
