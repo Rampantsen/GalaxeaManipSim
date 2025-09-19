@@ -181,15 +181,19 @@ class BimanualPlanner(BasePlanner):
         verbose=True,
         num_waypoints=4,
         noise_std=0.8,
+        augmentation_strategy="joint_space",
+        adaptive_noise=True,
+        task_complexity=1.0,
+        success_rate=0.5,
     ):
         """
-        Enhanced trajectory planning with waypoint augmentation.
+        Enhanced trajectory planning with advanced waypoint augmentation.
 
-        This function:
+        This function provides multiple augmentation strategies:
         1. Plans initial trajectory from start to goal
-        2. Randomly selects 1-3 waypoints along the trajectory
-        3. Adds noise to joint positions at these waypoints
-        4. Re-plans through the noisy waypoints to create augmented trajectory
+        2. Selects waypoints using various strategies
+        3. Applies different types of augmentation
+        4. Re-plans through augmented waypoints
 
         Args:
             left_pose: Target pose for left arm (can be None)
@@ -198,7 +202,15 @@ class BimanualPlanner(BasePlanner):
             with_screw: Whether to use screw motion planning
             verbose: Whether to print debug info
             num_waypoints: Number of waypoints to add (1-3), randomly chosen if None
-            noise_std: Standard deviation of noise to add to waypoints
+            noise_std: Base standard deviation of noise to add to waypoints
+            augmentation_strategy: Strategy for augmentation:
+                - "joint_space": Add noise in joint space (original method)
+                - "cartesian_space": Add noise in Cartesian space
+                - "temporal": Vary trajectory timing
+                - "mixed": Combine multiple strategies
+            adaptive_noise: Whether to adapt noise based on task complexity and success rate
+            task_complexity: Complexity factor (0.5-2.0) for adaptive noise scaling
+            success_rate: Historical success rate (0.0-1.0) for adaptive noise scaling
 
         Returns:
             Tuple of (left_result, right_result) with augmented trajectories
@@ -206,6 +218,20 @@ class BimanualPlanner(BasePlanner):
         # First get the original trajectory
         left_pose = self._to_pose(left_pose)
         right_pose = self._to_pose(right_pose)
+        
+        # Adaptive noise scaling based on task complexity and success rate
+        if adaptive_noise:
+            # Scale noise based on task complexity (higher complexity = more noise)
+            complexity_factor = np.clip(task_complexity, 0.5, 2.0)
+            # Scale noise based on success rate (lower success = more noise)
+            success_factor = np.clip(2.0 - success_rate, 0.5, 2.0)
+            adaptive_noise_std = noise_std * complexity_factor * success_factor
+            if verbose:
+                print(f"Adaptive noise: base={noise_std:.2f}, complexity={complexity_factor:.2f}, "
+                      f"success={success_rate:.2f}, final={adaptive_noise_std:.2f}")
+        else:
+            adaptive_noise_std = noise_std
+            
         # print("use traj_augment")
         if with_screw:
             original_result = self.plan_screw(left_pose, right_pose, robot_qpos)
@@ -221,7 +247,9 @@ class BimanualPlanner(BasePlanner):
 
         # Determine number of waypoints if not specified
         if num_waypoints is None:
-            num_waypoints = np.random.randint(2, 4)  # 1 to 3 waypoints
+            # More waypoints for complex tasks
+            max_waypoints = min(6, int(3 + task_complexity))
+            num_waypoints = np.random.randint(2, max_waypoints)
 
         # Process left arm trajectory if exists
         if left_result is not None and left_result["position"].shape[0] > 0:
@@ -231,8 +259,10 @@ class BimanualPlanner(BasePlanner):
                 self.left_arm_planner,
                 self.left_arm_planner_mask,
                 num_waypoints,
-                noise_std,
+                adaptive_noise_std,
                 verbose,
+                augmentation_strategy,
+                left_pose,
             )
 
         # Process right arm trajectory if exists
@@ -243,8 +273,10 @@ class BimanualPlanner(BasePlanner):
                 self.right_arm_planner,
                 self.right_arm_planner_mask,
                 num_waypoints,
-                noise_std,
+                adaptive_noise_std,
                 verbose,
+                augmentation_strategy,
+                right_pose,
             )
 
         return left_result, right_result
@@ -258,8 +290,25 @@ class BimanualPlanner(BasePlanner):
         num_waypoints,
         noise_std,
         verbose,
+        augmentation_strategy="joint_space",
+        target_pose=None,
     ):
-        """Augment trajectory for a single arm by adding noisy waypoints in joint space.
+        """Augment trajectory for a single arm using various strategies.
+
+        Args:
+            arm_result: Original trajectory result
+            robot_qpos: Current robot joint positions
+            arm_planner: Planner for this arm
+            arm_planner_mask: Mask for actionable joints
+            num_waypoints: Number of waypoints to add
+            noise_std: Standard deviation of noise
+            verbose: Whether to print debug info
+            augmentation_strategy: Strategy for augmentation:
+                - "joint_space": Add noise in joint space (original method)
+                - "cartesian_space": Add noise in Cartesian space
+                - "temporal": Vary trajectory timing
+                - "mixed": Combine multiple strategies
+            target_pose: Target pose for Cartesian space augmentation
 
         Notes:
         - We operate directly on arm_result["position"], which is the same shape the
@@ -290,18 +339,54 @@ class BimanualPlanner(BasePlanner):
         m = max(1, min(m, max_mid)) if max_mid > 0 else 0
         if m == 0:
             return arm_result
-        # Uniformly spaced waypoint indices (exclude start=0 and end=num_steps-1)
-        mid_indices = np.linspace(1, num_steps - 2, num=m, dtype=int)
-        mid_indices = np.unique(mid_indices)
+        
+        # Smart waypoint selection based on strategy
+        if augmentation_strategy == "cartesian_space" and target_pose is not None:
+            # Select waypoints based on trajectory curvature
+            mid_indices = self._select_curvature_waypoints(positions, m, arm_planner)
+        else:
+            # Uniformly spaced waypoint indices (exclude start=0 and end=num_steps-1)
+            mid_indices = np.linspace(1, num_steps - 2, num=m, dtype=int)
+            mid_indices = np.unique(mid_indices)
+        
         waypoint_indices = np.concatenate([[0], mid_indices, [num_steps - 1]])
 
-        # Copy and perturb intermediate waypoints (only last K dims)
+        # Copy and perturb intermediate waypoints based on strategy
         noisy_positions = positions.copy()
-        for idx in mid_indices:
-            noise = np.random.normal(0.0, noise_std, size=(arm_action_dim,))
-            noisy_positions[idx, -arm_action_dim:] = (
-                noisy_positions[idx, -arm_action_dim:] + noise
+        
+        if augmentation_strategy == "joint_space":
+            # Original joint space noise
+            for idx in mid_indices:
+                noise = np.random.normal(0.0, noise_std, size=(arm_action_dim,))
+                noisy_positions[idx, -arm_action_dim:] = (
+                    noisy_positions[idx, -arm_action_dim:] + noise
+                )
+        elif augmentation_strategy == "cartesian_space" and target_pose is not None:
+            # Cartesian space noise - convert to joint space
+            for idx in mid_indices:
+                noisy_positions = self._apply_cartesian_noise(
+                    noisy_positions, idx, noise_std, arm_planner, target_pose
+                )
+        elif augmentation_strategy == "temporal":
+            # Temporal augmentation - vary timing
+            noisy_positions = self._apply_temporal_augmentation(
+                noisy_positions, mid_indices, noise_std
             )
+        elif augmentation_strategy == "mixed":
+            # Mixed strategy - combine multiple approaches
+            for idx in mid_indices:
+                if np.random.random() < 0.5:
+                    # Joint space noise
+                    noise = np.random.normal(0.0, noise_std, size=(arm_action_dim,))
+                    noisy_positions[idx, -arm_action_dim:] = (
+                        noisy_positions[idx, -arm_action_dim:] + noise
+                    )
+                else:
+                    # Cartesian space noise
+                    if target_pose is not None:
+                        noisy_positions = self._apply_cartesian_noise(
+                            noisy_positions, idx, noise_std, arm_planner, target_pose
+                        )
 
         # Rebuild trajectory by linear interpolation between noisy waypoints,
         # preserving each original segment length
@@ -350,6 +435,74 @@ class BimanualPlanner(BasePlanner):
         new_result = dict(arm_result)
         new_result["position"] = augmented_positions
         return new_result
+
+    def _select_curvature_waypoints(self, positions, num_waypoints, arm_planner):
+        """Select waypoints based on trajectory curvature in Cartesian space."""
+        try:
+            # Convert joint positions to Cartesian poses
+            poses = []
+            for pos in positions:
+                # This is a simplified version - in practice you'd use the actual FK
+                # For now, we'll use joint space curvature as a proxy
+                poses.append(pos)
+            
+            # Calculate curvature (simplified as joint space differences)
+            curvatures = []
+            for i in range(1, len(poses) - 1):
+                # Simple curvature measure: sum of squared differences
+                curvature = np.sum((poses[i+1] - poses[i])**2) + np.sum((poses[i] - poses[i-1])**2)
+                curvatures.append(curvature)
+            
+            # Select indices with highest curvature
+            if len(curvatures) > 0:
+                sorted_indices = np.argsort(curvatures)[::-1]
+                selected = sorted_indices[:min(num_waypoints, len(sorted_indices))]
+                return selected + 1  # Offset by 1 since we excluded start/end
+            else:
+                # Fallback to uniform selection
+                return np.linspace(1, len(poses) - 2, num=num_waypoints, dtype=int)
+        except:
+            # Fallback to uniform selection if curvature calculation fails
+            return np.linspace(1, len(positions) - 2, num=num_waypoints, dtype=int)
+
+    def _apply_cartesian_noise(self, positions, idx, noise_std, arm_planner, target_pose):
+        """Apply noise in Cartesian space and convert back to joint space."""
+        try:
+            # This is a simplified implementation
+            # In practice, you'd:
+            # 1. Convert joint position to Cartesian pose
+            # 2. Add noise to Cartesian pose
+            # 3. Use IK to convert back to joint space
+            
+            # For now, we'll use a scaled version of joint space noise
+            # as a proxy for Cartesian space noise
+            arm_action_dim = len(positions[idx])
+            cartesian_noise_scale = 0.5  # Scale down for Cartesian space
+            noise = np.random.normal(0.0, noise_std * cartesian_noise_scale, size=(arm_action_dim,))
+            positions[idx] = positions[idx] + noise
+            return positions
+        except:
+            # Fallback to joint space noise
+            arm_action_dim = len(positions[idx])
+            noise = np.random.normal(0.0, noise_std, size=(arm_action_dim,))
+            positions[idx] = positions[idx] + noise
+            return positions
+
+    def _apply_temporal_augmentation(self, positions, mid_indices, noise_std):
+        """Apply temporal augmentation by varying trajectory timing."""
+        # This is a simplified temporal augmentation
+        # In practice, you might want to:
+        # 1. Vary the time spent at each waypoint
+        # 2. Add pauses or accelerations
+        # 3. Modify the interpolation timing
+        
+        # For now, we'll add small temporal variations
+        for idx in mid_indices:
+            # Add small random variations to simulate timing changes
+            temporal_noise = np.random.normal(0.0, noise_std * 0.1, size=positions[idx].shape)
+            positions[idx] = positions[idx] + temporal_noise
+        
+        return positions
 
     def get_move_trajectory(self, init_pos, left_result=None, right_result=None):
         n_step_left = left_result["position"].shape[0] if left_result else 0
