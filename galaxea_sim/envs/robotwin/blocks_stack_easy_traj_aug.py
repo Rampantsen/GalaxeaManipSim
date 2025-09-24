@@ -19,7 +19,7 @@ class BlocksStackEasyTrajAugEnv(RoboTwinBaseEnv):
             xlim=[-0.12, -0.01],
             ylim=[-0.25, 0.25],
             zlim=[self.block_half_size],
-            qpos=[0.27, 0.27, 0.65, 0.65],
+            qpos=[1, 0, 0, 0],
             rotate_rand=True,
             rotate_lim=[0, 0, np.pi],  # 绕z轴随机旋转-π到π弧度
             z_rotate_only=True,  # 只绕z轴旋转
@@ -93,7 +93,7 @@ class BlocksStackEasyTrajAugEnv(RoboTwinBaseEnv):
             )
 
     def rot_down_grip_pose(self, pose: sapien.Pose):
-        angle = math.pi / 4 if self.robot_name == "r1_pro" else math.pi / 2
+        angle = math.pi / 4
         pose_mat = pose.to_transformation_matrix()
         (lower_trans_quat := sapien.Pose()).set_rpy(rpy=(np.array([0, angle, 0])))
         lower_trans_mat = lower_trans_quat.to_transformation_matrix()
@@ -103,8 +103,6 @@ class BlocksStackEasyTrajAugEnv(RoboTwinBaseEnv):
         return new_pose
 
     def tf_to_grasp(self, pose: list):
-        if self.robot_name != "r1_pro":
-            return pose
         origin_pose = sapien.Pose(p=pose[:3], q=pose[3:])
         pose_mat = origin_pose.to_transformation_matrix()
         tf_mat = np.array(

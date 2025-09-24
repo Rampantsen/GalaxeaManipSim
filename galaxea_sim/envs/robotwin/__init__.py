@@ -176,17 +176,6 @@ gym.register(
 )
 
 gym.register(
-    id="R1BlocksStackHard-v0",
-    entry_point="galaxea_sim.envs.robotwin.blocks_stack_hard:BlocksStackHardEnv",
-    disable_env_checker=True,
-    order_enforce=False,
-    kwargs=dict(
-        robot_class=R1Robot, robot_kwargs=dict(init_qpos=R1_INIT_QPOS), headless=False
-    ),
-    max_episode_steps=500,
-)
-
-gym.register(
     id="R1ProBlocksStackHard-v0",
     entry_point="galaxea_sim.envs.robotwin.blocks_stack_hard:BlocksStackHardEnv",
     disable_env_checker=True,
