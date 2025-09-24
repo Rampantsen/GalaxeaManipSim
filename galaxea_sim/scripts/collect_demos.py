@@ -23,6 +23,7 @@ def main(
     obs_mode: Literal["state", "image"] = "state",
     tag: Optional[str] = "collected",
     ray_tracing: bool = False,
+    retry: bool = False,
 ):
     env = gym.make(
         env_name,

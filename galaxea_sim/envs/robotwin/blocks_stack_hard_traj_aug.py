@@ -2,10 +2,10 @@ import sapien
 import numpy as np
 
 from galaxea_sim.utils.robotwin_utils import create_box
-from .blocks_stack_easy import BlocksStackEasyEnv
+from .blocks_stack_easy_traj_aug import BlocksStackEasyTrajAugEnv
 
 
-class BlocksStackHardEnv(BlocksStackEasyEnv):
+class BlocksStackHardEnv(BlocksStackEasyTrajAugEnv):
     def _setup_block3(self):
         rand_pos = self._rand_pose()
         while (

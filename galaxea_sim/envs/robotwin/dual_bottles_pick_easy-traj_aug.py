@@ -141,7 +141,7 @@ class DualBottlesPickEasyEnv(RoboTwinBaseEnv):
         )
         substeps = [
             (
-                "move_to_pose_",
+                "move_to_pose_traj_augmented",
                 {
                     "left_pose": deepcopy(left_pose0),
                     "right_pose": deepcopy(right_pose0),
@@ -149,7 +149,7 @@ class DualBottlesPickEasyEnv(RoboTwinBaseEnv):
             ),
             ("open_gripper", {"action_mode": "both"}),
             (
-                "move_to_pose_",
+                "move_to_pose_traj_augmented",
                 {
                     "left_pose": deepcopy(left_pose1),
                     "right_pose": deepcopy(right_pose1),
@@ -157,14 +157,14 @@ class DualBottlesPickEasyEnv(RoboTwinBaseEnv):
             ),
             ("close_gripper", {"action_mode": "both"}),
             (
-                "move_to_pose_",
+                "move_to_pose_traj_augmented",
                 {
                     "left_pose": deepcopy(self.left_target_pose),
                     "right_pose": deepcopy(self.right_target_pose),
                 },
             ),
             (
-                "move_to_pose_",
+                "move_to_pose_traj_augmented",
                 {
                     "left_pose": deepcopy(self.left_target_pose),
                     "right_pose": deepcopy(self.right_target_pose),

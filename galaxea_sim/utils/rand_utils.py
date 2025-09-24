@@ -2,6 +2,7 @@ import numpy as np
 import sapien
 import transforms3d as t3d
 
+
 def rand_pose(
     xlim: np.ndarray | list,
     ylim: np.ndarray | list,
@@ -10,6 +11,7 @@ def rand_pose(
     rotate_rand: bool = False,
     rotate_lim: list = [0, 0, 0],
     qpos: list = [1, 0, 0, 0],
+    z_rotate_only: bool = False,
 ) -> sapien.Pose:
     if len(xlim) < 2 or xlim[1] < xlim[0]:
         xlim = np.array([xlim[0], xlim[0]])
@@ -28,8 +30,17 @@ def rand_pose(
 
     rotate = qpos
     if rotate_rand:
-        angles = [np.random.uniform(-rotate_lim[i], rotate_lim[i]) for i in range(3)]
-        rotate_quat = t3d.euler.euler2quat(*angles)
-        rotate = t3d.quaternions.qmult(rotate, rotate_quat)
+        if z_rotate_only:
+            # 只绕z轴旋转，直接设置z轴旋转角度
+            z_angle = np.random.uniform(-rotate_lim[2], rotate_lim[2])
+            rotate_quat = t3d.euler.euler2quat(0, 0, z_angle)
+            rotate = rotate_quat
+        else:
+            # 原有的组合旋转方式
+            angles = [
+                np.random.uniform(-rotate_lim[i], rotate_lim[i]) for i in range(3)
+            ]
+            rotate_quat = t3d.euler.euler2quat(*angles)
+            rotate = t3d.quaternions.qmult(rotate, rotate_quat)
 
     return sapien.Pose([x, y, z], rotate)

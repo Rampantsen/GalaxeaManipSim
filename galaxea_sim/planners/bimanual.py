@@ -46,13 +46,9 @@ class BimanualPlanner(BasePlanner):
         # FK 的关节顺序 = active_joint_names（全身顺序）
         self._fk.set_joint_order(active_joint_names)
 
-        # 记录左右臂末端 link 名（从各自 move_group 的"最后一个关节对应 link"推断）
-        left_ee_link = self.left_arm_planner.user_link_names[
-            self.left_arm_planner.move_group_joint_indices[-1]
-        ]
-        right_ee_link = self.right_arm_planner.user_link_names[
-            self.right_arm_planner.move_group_joint_indices[-1]
-        ]
+        # 记录左右臂末端 link 名（直接指定正确的末端执行器）
+        left_ee_link = "left_gripper_link"
+        right_ee_link = "right_gripper_link"
         # set_link_order 的顺序我们约定：index=0 -> left, index=1 -> right
         self._fk.set_link_order([left_ee_link, right_ee_link])
 
@@ -179,21 +175,17 @@ class BimanualPlanner(BasePlanner):
         robot_qpos=None,
         with_screw=False,
         verbose=True,
-        num_waypoints=4,
-        noise_std=0.8,
-        augmentation_strategy="joint_space",
-        adaptive_noise=True,
-        task_complexity=1.0,
-        success_rate=0.5,
+        num_waypoints=None,
+        noise_std=0.02,
     ):
         """
-        Enhanced trajectory planning with advanced waypoint augmentation.
+        Enhanced trajectory planning with waypoint augmentation.
 
-        This function provides multiple augmentation strategies:
+        This function:
         1. Plans initial trajectory from start to goal
-        2. Selects waypoints using various strategies
-        3. Applies different types of augmentation
-        4. Re-plans through augmented waypoints
+        2. Randomly selects 1-3 waypoints along the trajectory
+        3. Adds noise to joint positions at these waypoints
+        4. Re-plans through the noisy waypoints to create augmented trajectory
 
         Args:
             left_pose: Target pose for left arm (can be None)
@@ -202,15 +194,7 @@ class BimanualPlanner(BasePlanner):
             with_screw: Whether to use screw motion planning
             verbose: Whether to print debug info
             num_waypoints: Number of waypoints to add (1-3), randomly chosen if None
-            noise_std: Base standard deviation of noise to add to waypoints
-            augmentation_strategy: Strategy for augmentation:
-                - "joint_space": Add noise in joint space (original method)
-                - "cartesian_space": Add noise in Cartesian space
-                - "temporal": Vary trajectory timing
-                - "mixed": Combine multiple strategies
-            adaptive_noise: Whether to adapt noise based on task complexity and success rate
-            task_complexity: Complexity factor (0.5-2.0) for adaptive noise scaling
-            success_rate: Historical success rate (0.0-1.0) for adaptive noise scaling
+            noise_std: Standard deviation of noise to add to waypoints
 
         Returns:
             Tuple of (left_result, right_result) with augmented trajectories
@@ -218,21 +202,6 @@ class BimanualPlanner(BasePlanner):
         # First get the original trajectory
         left_pose = self._to_pose(left_pose)
         right_pose = self._to_pose(right_pose)
-        
-        # Adaptive noise scaling based on task complexity and success rate
-        if adaptive_noise:
-            # Scale noise based on task complexity (higher complexity = more noise)
-            complexity_factor = np.clip(task_complexity, 0.5, 2.0)
-            # Scale noise based on success rate (lower success = more noise)
-            success_factor = np.clip(2.0 - success_rate, 0.5, 2.0)
-            adaptive_noise_std = noise_std * complexity_factor * success_factor
-            if verbose:
-                print(f"Adaptive noise: base={noise_std:.2f}, complexity={complexity_factor:.2f}, "
-                      f"success={success_rate:.2f}, final={adaptive_noise_std:.2f}")
-        else:
-            adaptive_noise_std = noise_std
-            
-        # print("use traj_augment")
         if with_screw:
             original_result = self.plan_screw(left_pose, right_pose, robot_qpos)
         else:
@@ -244,27 +213,19 @@ class BimanualPlanner(BasePlanner):
             return None
 
         left_result, right_result = original_result
-
-        # Determine number of waypoints if not specified
         if num_waypoints is None:
-            # More waypoints for complex tasks
-            max_waypoints = min(6, int(3 + task_complexity))
-            num_waypoints = np.random.randint(2, max_waypoints)
-
-        # Process left arm trajectory if exists
+            num_waypoints = np.random.randint(4, 8)  # 2 to 3 waypoints
         if left_result is not None and left_result["position"].shape[0] > 0:
-            left_result = self._augment_single_arm_trajectory(
+            left_result_aug = self._augment_single_arm_trajectory(
                 left_result,
                 robot_qpos,
                 self.left_arm_planner,
                 self.left_arm_planner_mask,
                 num_waypoints,
-                adaptive_noise_std,
+                noise_std,
                 verbose,
-                augmentation_strategy,
-                left_pose,
             )
-
+            left_result = left_result_aug
         # Process right arm trajectory if exists
         if right_result is not None and right_result["position"].shape[0] > 0:
             right_result = self._augment_single_arm_trajectory(
@@ -273,10 +234,8 @@ class BimanualPlanner(BasePlanner):
                 self.right_arm_planner,
                 self.right_arm_planner_mask,
                 num_waypoints,
-                adaptive_noise_std,
+                noise_std,
                 verbose,
-                augmentation_strategy,
-                right_pose,
             )
 
         return left_result, right_result
@@ -290,25 +249,182 @@ class BimanualPlanner(BasePlanner):
         num_waypoints,
         noise_std,
         verbose,
-        augmentation_strategy="joint_space",
-        target_pose=None,
     ):
-        """Augment trajectory for a single arm using various strategies.
+        positions = arm_result["position"]
+        if positions is None or len(positions.shape) != 2:
+            return arm_result
 
-        Args:
-            arm_result: Original trajectory result
-            robot_qpos: Current robot joint positions
-            arm_planner: Planner for this arm
-            arm_planner_mask: Mask for actionable joints
-            num_waypoints: Number of waypoints to add
-            noise_std: Standard deviation of noise
-            verbose: Whether to print debug info
-            augmentation_strategy: Strategy for augmentation:
-                - "joint_space": Add noise in joint space (original method)
-                - "cartesian_space": Add noise in Cartesian space
-                - "temporal": Vary trajectory timing
-                - "mixed": Combine multiple strategies
-            target_pose: Target pose for Cartesian space augmentation
+        num_steps, dim = positions.shape
+        if num_steps < 1:
+            return arm_result
+
+        # 获取该臂的可控关节数（与get_move_trajectory的切片方式一致）
+        arm_action_dim = int(np.sum((~arm_planner_mask).astype(np.int32)))
+        arm_action_dim = max(0, min(arm_action_dim, dim))
+        if arm_action_dim == 0:
+            return arm_result
+
+        # 均匀选择中间点
+        max_mid = max(0, num_steps - 2)
+        m = num_waypoints
+        m = max(1, min(m, max_mid)) if max_mid > 0 else 0
+        if m == 0:
+            return arm_result
+
+        # 均匀采样中间点
+        if num_steps <= 2:
+            mid_indices = []
+        else:
+            # 在 [1, num_steps-2] 范围内均匀选择 m 个点
+            mid_indices = np.linspace(1, num_steps - 2, m, dtype=int)
+            mid_indices = np.unique(mid_indices)  # 去重并排序
+
+        waypoint_indices = np.concatenate([[0], mid_indices, [num_steps - 1]])
+
+        # 获取起点和终点的关节配置
+        start_config = positions[0]
+        end_config = positions[-1]
+
+        # 给中间点加噪声
+        noisy_waypoints = []
+        for idx in waypoint_indices:
+            if idx == 0 or idx == num_steps - 1:
+                # 起点和终点不加噪声
+                noisy_waypoints.append(positions[idx])
+            else:
+                # 中间点加噪声（只对最后K维加噪，与get_move_trajectory一致）
+                noisy_config = positions[idx].copy()
+                noise = np.random.normal(0.0, noise_std, size=(arm_action_dim,))
+                noisy_config[-arm_action_dim:] += noise
+                noisy_waypoints.append(noisy_config)
+
+        # 使用前向运动学重新计算轨迹
+        try:
+            # 将关节配置转换为笛卡尔空间路径点
+            cartesian_waypoints = []
+            for config in noisy_waypoints:
+                # 使用FK计算末端执行器位姿
+                ee_poses = self._fk.compute_forward_kinematics(config)
+                cartesian_waypoints.append(ee_poses)
+
+            # 在笛卡尔空间进行插值，然后转换回关节空间
+            augmented_positions = []
+            for i in range(len(waypoint_indices) - 1):
+                start_idx = waypoint_indices[i]
+                end_idx = waypoint_indices[i + 1]
+                seg_len = end_idx - start_idx
+
+                if seg_len <= 0:
+                    continue
+
+                # 在笛卡尔空间插值
+                start_pose = cartesian_waypoints[i]
+                end_pose = cartesian_waypoints[i + 1]
+
+                for j in range(seg_len + 1):
+                    if i == 0 and j == 0:
+                        # 第一个点
+                        alpha = 0.0
+                    elif i == len(waypoint_indices) - 2 and j == seg_len:
+                        # 最后一个点
+                        alpha = 1.0
+                    else:
+                        alpha = j / seg_len
+
+                    # 线性插值笛卡尔位姿
+                    interp_pose = (1 - alpha) * start_pose + alpha * end_pose
+
+                    # 使用IK将笛卡尔位姿转换回关节配置
+                    # 这里需要根据你的IK实现来调整
+                    # 暂时使用线性插值作为fallback
+                    if alpha == 0.0:
+                        joint_config = noisy_waypoints[i]
+                    elif alpha == 1.0:
+                        joint_config = noisy_waypoints[i + 1]
+                    else:
+                        joint_config = (1 - alpha) * noisy_waypoints[
+                            i
+                        ] + alpha * noisy_waypoints[i + 1]
+
+                    augmented_positions.append(joint_config)
+
+            augmented_positions = np.stack(augmented_positions, axis=0)
+
+            if augmented_positions.shape[0] != num_steps:
+                if verbose:
+                    logger.warning(
+                        f"Augmented length {augmented_positions.shape[0]} != original {num_steps}, using linear interpolation fallback"
+                    )
+                # Fallback to linear interpolation
+                augmented_positions = []
+                for i in range(len(waypoint_indices) - 1):
+                    start_idx = waypoint_indices[i]
+                    end_idx = waypoint_indices[i + 1]
+                    seg_len = end_idx - start_idx
+
+                    if seg_len <= 0:
+                        continue
+
+                    for j in range(seg_len + 1):
+                        if i == 0 and j == 0:
+                            alpha = 0.0
+                        elif i == len(waypoint_indices) - 2 and j == seg_len:
+                            alpha = 1.0
+                        else:
+                            alpha = j / seg_len
+
+                        joint_config = (1 - alpha) * noisy_waypoints[
+                            i
+                        ] + alpha * noisy_waypoints[i + 1]
+                        augmented_positions.append(joint_config)
+
+                augmented_positions = np.stack(augmented_positions, axis=0)
+
+        except Exception as e:
+            if verbose:
+                logger.warning(
+                    f"FK-based augmentation failed: {e}, using linear interpolation fallback"
+                )
+            # Fallback to linear interpolation
+            augmented_positions = []
+            for i in range(len(waypoint_indices) - 1):
+                start_idx = waypoint_indices[i]
+                end_idx = waypoint_indices[i + 1]
+                seg_len = end_idx - start_idx
+
+                if seg_len <= 0:
+                    continue
+
+                for j in range(seg_len + 1):
+                    if i == 0 and j == 0:
+                        alpha = 0.0
+                    elif i == len(waypoint_indices) - 2 and j == seg_len:
+                        alpha = 1.0
+                    else:
+                        alpha = j / seg_len
+
+                    joint_config = (1 - alpha) * noisy_waypoints[
+                        i
+                    ] + alpha * noisy_waypoints[i + 1]
+                    augmented_positions.append(joint_config)
+
+            augmented_positions = np.stack(augmented_positions, axis=0)
+
+        new_result = dict(arm_result)
+        new_result["position"] = augmented_positions
+        return new_result
+
+    def _augment_single_arm_trajectory_old(
+        self,
+        arm_result,
+        robot_qpos,
+        arm_planner,
+        arm_planner_mask,
+        num_waypoints,
+        noise_std,
+        verbose,
+    ):
+        """Augment trajectory for a single arm by adding noisy waypoints in joint space.
 
         Notes:
         - We operate directly on arm_result["position"], which is the same shape the
@@ -339,54 +455,21 @@ class BimanualPlanner(BasePlanner):
         m = max(1, min(m, max_mid)) if max_mid > 0 else 0
         if m == 0:
             return arm_result
-        
-        # Smart waypoint selection based on strategy
-        if augmentation_strategy == "cartesian_space" and target_pose is not None:
-            # Select waypoints based on trajectory curvature
-            mid_indices = self._select_curvature_waypoints(positions, m, arm_planner)
-        else:
-            # Uniformly spaced waypoint indices (exclude start=0 and end=num_steps-1)
-            mid_indices = np.linspace(1, num_steps - 2, num=m, dtype=int)
-            mid_indices = np.unique(mid_indices)
-        
+        # Evenly spaced mid indices between 1 and num_steps-2 (inclusive)
+        candidates = np.linspace(1, num_steps - 2, m + 2)[1:-1]
+        mid_indices = np.clip(np.round(candidates).astype(np.int64), 1, num_steps - 2)
+        mid_indices = np.unique(mid_indices)
+        if mid_indices.size == 0:
+            return arm_result
         waypoint_indices = np.concatenate([[0], mid_indices, [num_steps - 1]])
 
-        # Copy and perturb intermediate waypoints based on strategy
+        # Copy and perturb intermediate waypoints (only last K dims)
         noisy_positions = positions.copy()
-        
-        if augmentation_strategy == "joint_space":
-            # Original joint space noise
-            for idx in mid_indices:
-                noise = np.random.normal(0.0, noise_std, size=(arm_action_dim,))
-                noisy_positions[idx, -arm_action_dim:] = (
-                    noisy_positions[idx, -arm_action_dim:] + noise
-                )
-        elif augmentation_strategy == "cartesian_space" and target_pose is not None:
-            # Cartesian space noise - convert to joint space
-            for idx in mid_indices:
-                noisy_positions = self._apply_cartesian_noise(
-                    noisy_positions, idx, noise_std, arm_planner, target_pose
-                )
-        elif augmentation_strategy == "temporal":
-            # Temporal augmentation - vary timing
-            noisy_positions = self._apply_temporal_augmentation(
-                noisy_positions, mid_indices, noise_std
+        for idx in mid_indices:
+            noise = np.random.normal(0.0, noise_std, size=(arm_action_dim,))
+            noisy_positions[idx, -arm_action_dim:] = (
+                noisy_positions[idx, -arm_action_dim:] + noise
             )
-        elif augmentation_strategy == "mixed":
-            # Mixed strategy - combine multiple approaches
-            for idx in mid_indices:
-                if np.random.random() < 0.5:
-                    # Joint space noise
-                    noise = np.random.normal(0.0, noise_std, size=(arm_action_dim,))
-                    noisy_positions[idx, -arm_action_dim:] = (
-                        noisy_positions[idx, -arm_action_dim:] + noise
-                    )
-                else:
-                    # Cartesian space noise
-                    if target_pose is not None:
-                        noisy_positions = self._apply_cartesian_noise(
-                            noisy_positions, idx, noise_std, arm_planner, target_pose
-                        )
 
         # Rebuild trajectory by linear interpolation between noisy waypoints,
         # preserving each original segment length
@@ -435,74 +518,6 @@ class BimanualPlanner(BasePlanner):
         new_result = dict(arm_result)
         new_result["position"] = augmented_positions
         return new_result
-
-    def _select_curvature_waypoints(self, positions, num_waypoints, arm_planner):
-        """Select waypoints based on trajectory curvature in Cartesian space."""
-        try:
-            # Convert joint positions to Cartesian poses
-            poses = []
-            for pos in positions:
-                # This is a simplified version - in practice you'd use the actual FK
-                # For now, we'll use joint space curvature as a proxy
-                poses.append(pos)
-            
-            # Calculate curvature (simplified as joint space differences)
-            curvatures = []
-            for i in range(1, len(poses) - 1):
-                # Simple curvature measure: sum of squared differences
-                curvature = np.sum((poses[i+1] - poses[i])**2) + np.sum((poses[i] - poses[i-1])**2)
-                curvatures.append(curvature)
-            
-            # Select indices with highest curvature
-            if len(curvatures) > 0:
-                sorted_indices = np.argsort(curvatures)[::-1]
-                selected = sorted_indices[:min(num_waypoints, len(sorted_indices))]
-                return selected + 1  # Offset by 1 since we excluded start/end
-            else:
-                # Fallback to uniform selection
-                return np.linspace(1, len(poses) - 2, num=num_waypoints, dtype=int)
-        except:
-            # Fallback to uniform selection if curvature calculation fails
-            return np.linspace(1, len(positions) - 2, num=num_waypoints, dtype=int)
-
-    def _apply_cartesian_noise(self, positions, idx, noise_std, arm_planner, target_pose):
-        """Apply noise in Cartesian space and convert back to joint space."""
-        try:
-            # This is a simplified implementation
-            # In practice, you'd:
-            # 1. Convert joint position to Cartesian pose
-            # 2. Add noise to Cartesian pose
-            # 3. Use IK to convert back to joint space
-            
-            # For now, we'll use a scaled version of joint space noise
-            # as a proxy for Cartesian space noise
-            arm_action_dim = len(positions[idx])
-            cartesian_noise_scale = 0.5  # Scale down for Cartesian space
-            noise = np.random.normal(0.0, noise_std * cartesian_noise_scale, size=(arm_action_dim,))
-            positions[idx] = positions[idx] + noise
-            return positions
-        except:
-            # Fallback to joint space noise
-            arm_action_dim = len(positions[idx])
-            noise = np.random.normal(0.0, noise_std, size=(arm_action_dim,))
-            positions[idx] = positions[idx] + noise
-            return positions
-
-    def _apply_temporal_augmentation(self, positions, mid_indices, noise_std):
-        """Apply temporal augmentation by varying trajectory timing."""
-        # This is a simplified temporal augmentation
-        # In practice, you might want to:
-        # 1. Vary the time spent at each waypoint
-        # 2. Add pauses or accelerations
-        # 3. Modify the interpolation timing
-        
-        # For now, we'll add small temporal variations
-        for idx in mid_indices:
-            # Add small random variations to simulate timing changes
-            temporal_noise = np.random.normal(0.0, noise_std * 0.1, size=positions[idx].shape)
-            positions[idx] = positions[idx] + temporal_noise
-        
-        return positions
 
     def get_move_trajectory(self, init_pos, left_result=None, right_result=None):
         n_step_left = left_result["position"].shape[0] if left_result else 0
@@ -581,100 +596,96 @@ class BimanualPlanner(BasePlanner):
             )
 
 
-class SapienBimanualPlanner(BimanualPlanner):
-    def __init__(
-        self,
-        scene,
-        robot,
-        left_arm_move_group,
-        right_arm_move_group,
-        active_joint_names,
-        control_freq,
-    ):
-        planning_world = SapienPlanningWorld(scene, [robot])
-        self.left_arm_planner = SapienPlanner(planning_world, left_arm_move_group)
-        self.right_arm_planner = SapienPlanner(planning_world, right_arm_move_group)
-        self.num_dofs = len(active_joint_names)
-        num_dofs = len(active_joint_names)
-        self.left_arm_planner_mask = get_planner_mask(
-            num_dofs,
-            self.left_arm_planner.move_group_joint_indices,
-            self.right_arm_planner.move_group_joint_indices,
-        )
-        self.right_arm_planner_mask = get_planner_mask(
-            num_dofs,
-            self.right_arm_planner.move_group_joint_indices,
-            self.left_arm_planner.move_group_joint_indices,
-        )
-        self.sim2mplib_mapping = get_sim2mplib_mapping(
-            active_joint_names,
-            self.left_arm_planner.user_joint_names,
-        )
-        self.action_dim = self.left_arm_action_dim + self.right_arm_action_dim + 2
-        logger.debug(
-            f"Left arm move group joint indices: {self.left_arm_planner.move_group_joint_indices}"
-        )
-        logger.debug(
-            f"Right arm move group joint indices: {self.right_arm_planner.move_group_joint_indices}"
-        )
-        logger.debug(f"Left arm planner mask: {self.left_arm_planner_mask}")
-        logger.debug(f"Right arm planner mask: {self.right_arm_planner_mask}")
-        logger.debug(f"action_dim: {self.action_dim}")
-        self.time_step = 1 / control_freq
+# class SapienBimanualPlanner(BimanualPlanner):
+#     def __init__(
+#         self,
+#         scene,
+#         robot,
+#         left_arm_move_group,
+#         right_arm_move_group,
+#         active_joint_names,
+#         control_freq,
+#     ):
+#         planning_world = SapienPlanningWorld(scene, [robot])
+#         self.left_arm_planner = SapienPlanner(planning_world, left_arm_move_group)
+#         self.right_arm_planner = SapienPlanner(planning_world, right_arm_move_group)
+#         self.num_dofs = len(active_joint_names)
+#         num_dofs = len(active_joint_names)
+#         self.left_arm_planner_mask = get_planner_mask(
+#             num_dofs,
+#             self.left_arm_planner.move_group_joint_indices,
+#             self.right_arm_planner.move_group_joint_indices,
+#         )
+#         self.right_arm_planner_mask = get_planner_mask(
+#             num_dofs,
+#             self.right_arm_planner.move_group_joint_indices,
+#             self.left_arm_planner.move_group_joint_indices,
+#         )
+#         self.sim2mplib_mapping = get_sim2mplib_mapping(
+#             active_joint_names,
+#             self.left_arm_planner.user_joint_names,
+#         )
+#         self.action_dim = self.left_arm_action_dim + self.right_arm_action_dim + 2
+#         logger.debug(
+#             f"Left arm move group joint indices: {self.left_arm_planner.move_group_joint_indices}"
+#         )
+#         logger.debug(
+#             f"Right arm move group joint indices: {self.right_arm_planner.move_group_joint_indices}"
+#         )
+#         logger.debug(f"Left arm planner mask: {self.left_arm_planner_mask}")
+#         logger.debug(f"Right arm planner mask: {self.right_arm_planner_mask}")
+#         logger.debug(f"action_dim: {self.action_dim}")
+#         self.time_step = 1 / control_freq
 
-        # Initialize PinocchioModel for forward kinematics
-        self._fk = robot.articulation.create_pinocchio_model()
-        self._fk.set_joint_order(active_joint_names)
+#         # Initialize PinocchioModel for forward kinematics
+#         self._fk = robot.articulation.create_pinocchio_model()
+#         self._fk.set_joint_order(active_joint_names)
 
-        # Get end-effector link names
-        left_ee_link = self.left_arm_planner.user_link_names[
-            self.left_arm_planner.move_group_joint_indices[-1]
-        ]
-        right_ee_link = self.right_arm_planner.user_link_names[
-            self.right_arm_planner.move_group_joint_indices[-1]
-        ]
-        self._fk.set_link_order([left_ee_link, right_ee_link])
+#         # Get end-effector link names (直接指定正确的末端执行器)
+#         left_ee_link = "left_gripper_link"
+#         right_ee_link = "right_gripper_link"
+#         self._fk.set_link_order([left_ee_link, right_ee_link])
 
-        disable_table_collision(self.left_arm_planner)
-        disable_table_collision(self.right_arm_planner)
+#         disable_table_collision(self.left_arm_planner)
+#         disable_table_collision(self.right_arm_planner)
 
-    def get_gripper_trajectory(self, init_pos, method, kwargs):
-        trajectory = np.stack([init_pos] * GRIPPER_STEPS)
-        gripper_target_state = 0.04 if method == "open_gripper" else 0.0
-        gripper_indices = []
-        use_left, use_right = False, False
-        if kwargs["action_mode"] == "left":
-            gripper_indices = [self.left_arm_action_dim]
-            use_left = True
-        elif kwargs["action_mode"] == "right":
-            gripper_indices = [-1]
-            use_right = True
-        elif kwargs["action_mode"] == "both":
-            gripper_indices = [self.left_arm_action_dim, -1]
-            use_left, use_right = True, True
-        if use_left:
-            if method == "close_gripper":
-                planner_attach_obj(
-                    self.left_arm_planner,
-                    kwargs["cube_actor"],
-                    touch_links=[
-                        "left_gripper_finger_link1",
-                        "left_gripper_finger_link2",
-                    ],
-                )
-            elif "cube_actor" in kwargs:
-                planner_detach_obj(self.left_arm_planner, kwargs["cube_actor"])
-        if use_right:
-            if method == "close_gripper":
-                planner_attach_obj(
-                    self.right_arm_planner,
-                    kwargs["cube_actor"],
-                    touch_links=[
-                        "right_gripper_finger_link1",
-                        "right_gripper_finger_link2",
-                    ],
-                )
-            elif "cube_actor" in kwargs:
-                planner_detach_obj(self.right_arm_planner, kwargs["cube_actor"])
-        trajectory[:, gripper_indices] = gripper_target_state
-        return trajectory
+#     def get_gripper_trajectory(self, init_pos, method, kwargs):
+#         trajectory = np.stack([init_pos] * GRIPPER_STEPS)
+#         gripper_target_state = 0.04 if method == "open_gripper" else 0.0
+#         gripper_indices = []
+#         use_left, use_right = False, False
+#         if kwargs["action_mode"] == "left":
+#             gripper_indices = [self.left_arm_action_dim]
+#             use_left = True
+#         elif kwargs["action_mode"] == "right":
+#             gripper_indices = [-1]
+#             use_right = True
+#         elif kwargs["action_mode"] == "both":
+#             gripper_indices = [self.left_arm_action_dim, -1]
+#             use_left, use_right = True, True
+#         if use_left:
+#             if method == "close_gripper":
+#                 planner_attach_obj(
+#                     self.left_arm_planner,
+#                     kwargs["cube_actor"],
+#                     touch_links=[
+#                         "left_gripper_finger_link1",
+#                         "left_gripper_finger_link2",
+#                     ],
+#                 )
+#             elif "cube_actor" in kwargs:
+#                 planner_detach_obj(self.left_arm_planner, kwargs["cube_actor"])
+#         if use_right:
+#             if method == "close_gripper":
+#                 planner_attach_obj(
+#                     self.right_arm_planner,
+#                     kwargs["cube_actor"],
+#                     touch_links=[
+#                         "right_gripper_finger_link1",
+#                         "right_gripper_finger_link2",
+#                     ],
+#                 )
+#             elif "cube_actor" in kwargs:
+#                 planner_detach_obj(self.right_arm_planner, kwargs["cube_actor"])
+#         trajectory[:, gripper_indices] = gripper_target_state
+#         return trajectory
