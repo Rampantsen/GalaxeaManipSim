@@ -1,5 +1,6 @@
 import math
 from copy import deepcopy
+import random
 
 import sapien
 import numpy as np
@@ -8,6 +9,23 @@ import transforms3d
 from galaxea_sim.utils.robotwin_utils import create_box
 from galaxea_sim.utils.rand_utils import rand_pose
 from .robotwin_base import RoboTwinBaseEnv
+
+# 定义可选的抓取角度
+GRASP_ANGLES = [0, math.pi / 6, math.pi / 4, math.pi / 3]
+
+# 定义每个抓取角度对应的偏移量 (x, y, z)
+GRASP_OFFSETS = {
+    0: [-0.05, 0, 0.04],  # 0度抓取
+    math.pi / 6: [-0.045, 0, 0.025],  # 30度抓取
+    math.pi / 4: [-0.04, 0, 0.03],  # 45度抓取
+    math.pi / 3: [-0.035, 0, 0.01],  # 60度抓取
+}
+
+# GRASP_ANGLES = [math.pi / 2]
+
+# GRASP_OFFSETS = {
+# math.pi / 2: [-0.005, -0.005, 0.005],  # 90度抓取
+# }
 
 
 class BlocksStackEasyTrajAugEnv(RoboTwinBaseEnv):
@@ -92,27 +110,50 @@ class BlocksStackEasyTrajAugEnv(RoboTwinBaseEnv):
                 )
             )
 
-    def rot_down_grip_pose(self, pose: sapien.Pose):
-        angle = math.pi / 4
+    def rot_down_grip_pose(self, pose: sapien.Pose, grasp_angle: float = math.pi / 4):
+        """根据抓取角度旋转抓取姿态
+
+        Args:
+            pose: 原始姿态
+            grasp_angle: 抓取角度 (弧度)
+        """
         pose_mat = pose.to_transformation_matrix()
-        (lower_trans_quat := sapien.Pose()).set_rpy(rpy=(np.array([0, angle, 0])))
+        (lower_trans_quat := sapien.Pose()).set_rpy(rpy=(np.array([0, grasp_angle, 0])))
         lower_trans_mat = lower_trans_quat.to_transformation_matrix()
 
         new_pos = np.dot(pose_mat, lower_trans_mat)
         new_pose = sapien.Pose(matrix=new_pos)
         return new_pose
 
-    def tf_to_grasp(self, pose: list):
+    def tf_to_grasp(self, pose: list, grasp_angle: float = math.pi / 4):
+        """根据抓取角度应用对应的偏移量
+
+        Args:
+            pose: 原始姿态 [x, y, z, qx, qy, qz, qw]
+            grasp_angle: 抓取角度 (弧度)
+        """
         origin_pose = sapien.Pose(p=pose[:3], q=pose[3:])
         pose_mat = origin_pose.to_transformation_matrix()
+
+        # 根据抓取角度获取对应的偏移量
+        offset = GRASP_OFFSETS.get(grasp_angle, [-0.05, 0, 0.02])  # 默认偏移量
         tf_mat = np.array(
-            [[1, 0, 0, -0.05], [0, 1, 0, 0], [0, 0, 1, 0.02], [0, 0, 0, 1]]
+            [
+                [1, 0, 0, offset[0]],
+                [0, 1, 0, offset[1]],
+                [0, 0, 1, offset[2]],
+                [0, 0, 0, 1],
+            ]
         )
+
         new_pos = np.dot(pose_mat, tf_mat)
         new_pose = sapien.Pose(matrix=new_pos)
         return list(new_pose.p) + list(new_pose.q)
 
     def move_block(self, actor: sapien.Entity, id, last_arm=None):
+        # 随机选择一个抓取角度
+        self.grasp_angle = random.choice(GRASP_ANGLES)
+
         actor_rpy = actor.get_pose().get_rpy()
         actor_pos = actor.get_pose().p
         actor_euler = math.fmod(actor_rpy[2], math.pi / 2)
@@ -122,12 +163,16 @@ class BlocksStackEasyTrajAugEnv(RoboTwinBaseEnv):
             (grasp_qpose := sapien.Pose()).set_rpy(
                 rpy=(np.array([0, 0, grasp_euler]) + self.robot.right_ee_rpy_offset)
             )
-            grasp_qpose = self.rot_down_grip_pose(grasp_qpose).q.tolist()
+            grasp_qpose = self.rot_down_grip_pose(
+                grasp_qpose, self.grasp_angle
+            ).q.tolist()
 
             (target_qpose := sapien.Pose()).set_rpy(
                 rpy=(np.array([0, 0, math.pi / 2]) + self.robot.right_ee_rpy_offset)
             )
-            target_qpose = self.rot_down_grip_pose(target_qpose).q.tolist()
+            target_qpose = self.rot_down_grip_pose(
+                target_qpose, self.grasp_angle
+            ).q.tolist()
             target_pose = [
                 self.tabletop_center_in_world[0] + self.place_pos_x_offset,
                 0.01,
@@ -138,12 +183,16 @@ class BlocksStackEasyTrajAugEnv(RoboTwinBaseEnv):
             (grasp_qpose := sapien.Pose()).set_rpy(
                 rpy=(np.array([0, 0, grasp_euler]) + self.robot.right_ee_rpy_offset)
             )
-            grasp_qpose = self.rot_down_grip_pose(grasp_qpose).q.tolist()
+            grasp_qpose = self.rot_down_grip_pose(
+                grasp_qpose, self.grasp_angle
+            ).q.tolist()
 
             (target_qpose := sapien.Pose()).set_rpy(
                 rpy=(np.array([0, 0, -math.pi / 2]) + self.robot.right_ee_rpy_offset)
             )
-            target_qpose = self.rot_down_grip_pose(target_qpose).q.tolist()
+            target_qpose = self.rot_down_grip_pose(
+                target_qpose, self.grasp_angle
+            ).q.tolist()
             target_pose = [
                 self.tabletop_center_in_world[0] + self.place_pos_x_offset,
                 -0.01,
@@ -151,10 +200,10 @@ class BlocksStackEasyTrajAugEnv(RoboTwinBaseEnv):
             ] + target_qpose
 
         self.grasp_euler = grasp_euler
-        target_pose = self.tf_to_grasp(target_pose)
+        target_pose = self.tf_to_grasp(target_pose, self.grasp_angle)
         substeps = []
         pre_grasp_pose = list(actor_pos + [0, 0, 0.2]) + grasp_qpose
-        pre_grasp_pose = self.tf_to_grasp(pre_grasp_pose)
+        pre_grasp_pose = self.tf_to_grasp(pre_grasp_pose, self.grasp_angle)
         if actor_pos[1] < 0:
             now_arm = "right"
             if now_arm == last_arm or last_arm is None:
@@ -300,3 +349,13 @@ class BlocksStackEasyTrajAugEnv(RoboTwinBaseEnv):
 
     def _get_reward(self):
         return 1.0 if self._get_info()["success"] else 0.0
+
+    def get_grasp_info(self):
+        """获取当前抓取信息"""
+        if hasattr(self, "grasp_angle"):
+            return {
+                "grasp_angle": self.grasp_angle,
+                "grasp_angle_degrees": math.degrees(self.grasp_angle),
+                "offset": GRASP_OFFSETS.get(self.grasp_angle, [-0.05, 0, 0.02]),
+            }
+        return None

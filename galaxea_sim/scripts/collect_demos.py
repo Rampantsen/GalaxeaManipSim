@@ -19,7 +19,7 @@ def main(
     num_demos: int = 100,
     dataset_dir: str = "datasets",
     control_freq: int = 15,
-    headless: bool = False,
+    headless: bool = True,
     obs_mode: Literal["state", "image"] = "state",
     tag: Optional[str] = "collected",
     ray_tracing: bool = False,
