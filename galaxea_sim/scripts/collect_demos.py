@@ -21,9 +21,7 @@ def main(
     control_freq: int = 15,
     headless: bool = True,
     obs_mode: Literal["state", "image"] = "state",
-    feature: Literal[
-        "grasp_sample", "traj_augmented_grasp_sample", "normal", "all"
-    ] = "normal",
+    feature: Literal["no-retry", "traj_augmented_only", "normal", "all"] = "all",
     tag: Literal["collected"] = "collected",
     ray_tracing: bool = False,
     retry: bool = False,

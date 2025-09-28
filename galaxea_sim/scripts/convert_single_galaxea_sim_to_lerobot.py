@@ -16,20 +16,21 @@ def main(
     task: str,
     data_dir: str = "datasets",
     tag: str | None = None,
-    robot: Literal["r1", "r1_pro"] = "r1",
+    robot: Literal["r1", "r1_pro"] = "r1_pro",
     use_eef: bool = False,
     use_video: bool = False,
     push_to_hub: bool = False,
-    output_dir: str = "outputs",   # 新增参数
+    output_dir: str = "outputs",  # 新增参数
+    feature: Literal["no-retry", "traj_augmented_only", "normal", "all"] = "all",
 ):
-    output_path = HF_LEROBOT_HOME / REPO_PREFIX / task
+    output_path = HF_LEROBOT_HOME / REPO_PREFIX / task / feature
     if output_path.exists():
         shutil.rmtree(output_path)
     shape = (224, 224, 3)  # Resize images to 224x224
     arm_dof = 7 if (robot == "r1_pro" or use_eef) else 6
 
     dataset = LeRobotDataset.create(
-        repo_id=f"{REPO_PREFIX}/{output_path.name}",
+        repo_id=f"{REPO_PREFIX}/{task}/{feature}",
         robot_type=robot,
         fps=15,
         features={
@@ -65,8 +66,9 @@ def main(
     for raw_dataset_name in [task]:
         if tag:
             h5_paths = glob.glob(
-                f"{data_dir}/{raw_dataset_name}/{tag}/*.h5", recursive=True
+                f"{data_dir}/{raw_dataset_name}/{feature}/{tag}/*.h5", recursive=True
             )
+            print("1")
         else:
             h5_paths = glob.glob(
                 f"{data_dir}/{raw_dataset_name}/**/*.h5", recursive=True
@@ -170,7 +172,7 @@ def main(
                     )
             dataset.save_episode()
     print(
-        f"Dataset {output_path.name} created successfully with {len(dataset)} frames."
+        f"Dataset {REPO_PREFIX}/{task}/{feature} created successfully with {len(dataset)} frames."
     )
     # Optionally push to the Hugging Face Hub
     if push_to_hub:

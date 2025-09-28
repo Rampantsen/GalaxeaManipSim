@@ -15,10 +15,10 @@ from lerobot.configs.types import FeatureType
 from loguru import logger
 
 
-def main(task: str):
+def main(task: str, feature: str):
     # Create a directory to store the training checkpoint.
     exp_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_directory = Path(f"outputs/train/{task}/diffusion/{exp_id}")
+    output_directory = Path(f"outputs/train/{task}/{feature}/diffusion/{exp_id}")
     output_directory.mkdir(parents=True, exist_ok=True)
 
     # # Select your device
@@ -31,16 +31,20 @@ def main(task: str):
     # creating the policy:
     #   - input/output shapes: to properly size the policy
     #   - dataset stats: for normalization and denormalization of input/outputs
-    dataset_name = task
+    dataset_name = f"{task}/{feature}"
     dataset_metadata = LeRobotDatasetMetadata(f"galaxea/{dataset_name}")
     features = dataset_to_policy_features(dataset_metadata.features)
-    output_features = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}
-    input_features = {key: ft for key, ft in features.items() if key not in output_features}
+    output_features = {
+        key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION
+    }
+    input_features = {
+        key: ft for key, ft in features.items() if key not in output_features
+    }
 
     # Policies are initialized with a configuration class, in this case `DiffusionConfig`. For this example,
     # we'll just use the defaults and so no arguments other than input/output features need to be passed.
     cfg = DiffusionConfig(
-        input_features=input_features, 
+        input_features=input_features,
         output_features=output_features,
         crop_shape=(224, 224),
         crop_is_random=False,
@@ -61,18 +65,22 @@ def main(task: str):
         "observation.images.rgb_head": [0.0],
         "observation.images.rgb_left_hand": [0.0],
         "observation.images.rgb_right_hand": [0.0],
-        "observation.state": [i / dataset_metadata.fps for i in cfg.observation_delta_indices],
+        "observation.state": [
+            i / dataset_metadata.fps for i in cfg.observation_delta_indices
+        ],
         "action": [i / dataset_metadata.fps for i in cfg.action_delta_indices],
     }
 
     # We can then instantiate the dataset with these delta_timestamps configuration.
-    dataset = LeRobotDataset(f"galaxea/{dataset_name}", delta_timestamps=delta_timestamps)
+    dataset = LeRobotDataset(
+        f"galaxea/{dataset_name}", delta_timestamps=delta_timestamps
+    )
     num_epochs = 300
-    batch_size = 128
+    batch_size = 32
     training_steps = num_epochs * len(dataset) // batch_size
     log_freq = 50
     save_freq = 1000
-    
+
     print(f"Training for {training_steps} steps.")
     print(f"Logging every {log_freq} steps.")
 
@@ -109,9 +117,11 @@ def main(task: str):
                 )
             if step % save_freq == 0:
                 # Save a policy checkpoint.
-                output_directory.mkdir(parents=True, exist_ok=True)  
+                output_directory.mkdir(parents=True, exist_ok=True)
                 policy.save_pretrained(output_directory / f"checkpoint-{step}")
-                with open(output_directory / f"checkpoint-{step}/dataset_metadata.pkl", "wb") as f:
+                with open(
+                    output_directory / f"checkpoint-{step}/dataset_metadata.pkl", "wb"
+                ) as f:
                     pickle.dump(dataset_metadata, f)
             step += 1
             if step >= training_steps:

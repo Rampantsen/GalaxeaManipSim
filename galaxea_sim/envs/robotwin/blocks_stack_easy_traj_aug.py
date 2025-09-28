@@ -12,8 +12,8 @@ from .robotwin_base import RoboTwinBaseEnv
 import os
 
 # 定义可选的抓取角度
-GRASP_ANGLES = [0, math.pi / 6, math.pi / 4, math.pi / 3]
-
+# GRASP_ANGLES = [0, math.pi / 6, math.pi / 4, math.pi / 3]
+GRASP_ANGLES = [math.pi / 4]
 # 定义每个抓取角度对应的偏移量 (x, y, z)
 GRASP_OFFSETS = {
     0: [-0.05, 0, 0.04],  # 0度抓取
@@ -27,9 +27,10 @@ class BlocksStackEasyTrajAugEnv(RoboTwinBaseEnv):
     place_pos_x_offset = -0.2
     block_half_size = 0.02
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, enable_retry=False, **kwargs):
         super().__init__(*args, **kwargs)
         self.current_arm = None  # 跟踪当前使用的机械臂
+        self.enable_retry = enable_retry  # 控制是否启用retry逻辑
 
     def _rand_pose(self):
         return rand_pose(
@@ -292,14 +293,25 @@ class BlocksStackEasyTrajAugEnv(RoboTwinBaseEnv):
         return substeps, now_arm
 
     def solution(self):
-        # 移动第一个方块，带retry逻辑
-        self.current_arm = None
-        for step in self._move_block_with_retry(self.block1, 1, self.current_arm):
-            yield step
+        if self.enable_retry:
+            # 使用带retry逻辑的版本
+            self.current_arm = None
+            for step in self._move_block_with_retry(self.block1, 1, self.current_arm):
+                yield step
 
-        # 移动第二个方块，带retry逻辑
-        for step in self._move_block_with_retry(self.block2, 2, self.current_arm):
-            yield step
+            # 移动第二个方块，带retry逻辑
+            for step in self._move_block_with_retry(self.block2, 2, self.current_arm):
+                yield step
+        else:
+            # 使用原始逻辑（不带retry）
+            substeps, last_arm = self.move_block(self.block1, 1)
+            self.info = f"move block 1,{self.block1.get_pose().p}"
+            for substep in substeps:
+                yield substep
+            substeps, last_arm = self.move_block(self.block2, 2, last_arm)
+            self.info = f"move block 2,{self.block2.get_pose().p}"
+            for substep in substeps:
+                yield substep
 
     def _move_block_with_retry(self, actor, id, last_arm, max_retries=2):
         """移动物体，带retry逻辑
