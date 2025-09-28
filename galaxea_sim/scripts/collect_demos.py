@@ -21,7 +21,10 @@ def main(
     control_freq: int = 15,
     headless: bool = True,
     obs_mode: Literal["state", "image"] = "state",
-    tag: Optional[str] = "collected",
+    feature: Literal[
+        "grasp_sample", "traj_augmented_grasp_sample", "normal", "all"
+    ] = "normal",
+    tag: Literal["collected"] = "collected",
     ray_tracing: bool = False,
     retry: bool = False,
 ):
@@ -40,9 +43,11 @@ def main(
         right_arm_move_group=env.unwrapped.right_ee_link_name,
         active_joint_names=env.unwrapped.active_joint_names,
         control_freq=env.unwrapped.control_freq,
+        robot_test=env.unwrapped.robot.robot,
+        env=env,
     )
 
-    save_dir = Path(dataset_dir) / env_name / tag
+    save_dir = Path(dataset_dir) / env_name / feature / tag
     num_collected = 0
     num_tries = 0
     meta_info_list = []

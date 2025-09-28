@@ -9,6 +9,7 @@ import transforms3d
 from galaxea_sim.utils.robotwin_utils import create_box
 from galaxea_sim.utils.rand_utils import rand_pose
 from .robotwin_base import RoboTwinBaseEnv
+import os
 
 # 定义可选的抓取角度
 GRASP_ANGLES = [0, math.pi / 6, math.pi / 4, math.pi / 3]
@@ -21,16 +22,14 @@ GRASP_OFFSETS = {
     math.pi / 3: [-0.035, 0, 0.01],  # 60度抓取
 }
 
-# GRASP_ANGLES = [math.pi / 2]
-
-# GRASP_OFFSETS = {
-# math.pi / 2: [-0.005, -0.005, 0.005],  # 90度抓取
-# }
-
 
 class BlocksStackEasyTrajAugEnv(RoboTwinBaseEnv):
     place_pos_x_offset = -0.2
     block_half_size = 0.02
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.current_arm = None  # 跟踪当前使用的机械臂
 
     def _rand_pose(self):
         return rand_pose(
@@ -39,7 +38,7 @@ class BlocksStackEasyTrajAugEnv(RoboTwinBaseEnv):
             zlim=[self.block_half_size],
             qpos=[1, 0, 0, 0],
             rotate_rand=True,
-            rotate_lim=[0, 0, np.pi],  # 绕z轴随机旋转-π到π弧度
+            rotate_lim=[0, 0, np.pi * 2],  # 绕z轴随机旋转-π到π弧度
             z_rotate_only=True,  # 只绕z轴旋转
         )
 
@@ -293,14 +292,109 @@ class BlocksStackEasyTrajAugEnv(RoboTwinBaseEnv):
         return substeps, now_arm
 
     def solution(self):
-        substeps, last_arm = self.move_block(self.block1, 1)
-        self.info = f"move block 1,{self.block1.get_pose().p}"
-        for substep in substeps:
-            yield substep
-        substeps, last_arm = self.move_block(self.block2, 2, last_arm)
-        self.info = f"move block 2,{self.block2.get_pose().p}"
-        for substep in substeps:
-            yield substep
+        # 移动第一个方块，带retry逻辑
+        self.current_arm = None
+        for step in self._move_block_with_retry(self.block1, 1, self.current_arm):
+            yield step
+
+        # 移动第二个方块，带retry逻辑
+        for step in self._move_block_with_retry(self.block2, 2, self.current_arm):
+            yield step
+
+    def _move_block_with_retry(self, actor, id, last_arm, max_retries=2):
+        """移动物体，带retry逻辑
+
+        Args:
+            actor: 要移动的物体
+            id: 物体ID
+            last_arm: 上次使用的机械臂
+            max_retries: 最大重试次数，默认2次
+
+        Returns:
+            str: 使用的机械臂名称
+        """
+        retry_count = 0
+        while retry_count <= max_retries:
+            # 生成抓取动作步骤
+            substeps, now_arm = self.move_block(actor, id, last_arm)
+
+            # 执行抓取前的步骤
+            for i, (action_name, action_params) in enumerate(substeps):
+                if action_name == "close_gripper":
+                    # 关闭夹爪
+                    yield (action_name, action_params)
+
+                    # 找到下一个抬起动作
+                    lift_step_index = None
+                    for j in range(i + 1, len(substeps)):
+                        if substeps[j][0] == "move_to_pose_traj_augmented":
+                            lift_step_index = j
+                            break
+
+                    if lift_step_index is not None:
+                        # 执行抬起动作
+                        yield substeps[lift_step_index]
+
+                        # 在抬起后检测抓取是否成功
+                        is_grasped = self.evaluate_grasp(actor, now_arm)
+
+                        if is_grasped:
+                            # 抓取成功，继续执行后续步骤
+                            for remaining_step in substeps[lift_step_index + 1 :]:
+                                yield remaining_step
+                            self.current_arm = now_arm  # 更新当前使用的机械臂
+                            return now_arm  # 成功完成，返回使用的机械臂
+                        else:
+                            # 抓取失败，如果还有重试机会，则重新开始
+                            if retry_count < max_retries:
+                                # 打开夹爪，准备重试
+                                yield ("open_gripper", {"action_mode": now_arm})
+                                # 移动到安全位置
+                                safe_pose = list(
+                                    actor.get_pose().p + [0, 0, 0.2]
+                                ) + list(
+                                    self.robot.left_ee_link.get_entity_pose().q
+                                    if now_arm == "left"
+                                    else self.robot.right_ee_link.get_entity_pose().q
+                                )
+                                yield ("move_to_pose", {f"{now_arm}_pose": safe_pose})
+                                retry_count += 1
+                                break  # 跳出当前循环，开始下一次重试
+                            else:
+                                # 没有重试机会了，直接返回失败
+                                return now_arm
+                    else:
+                        # 没有找到抬起动作，直接检测
+                        is_grasped = self.evaluate_grasp(actor, now_arm)
+                        if is_grasped:
+                            # 抓取成功，继续执行后续步骤
+                            for remaining_step in substeps[i + 1 :]:
+                                yield remaining_step
+                            self.current_arm = now_arm  # 更新当前使用的机械臂
+                            return now_arm
+                        else:
+                            # 抓取失败，如果还有重试机会，则重新开始
+                            if retry_count < max_retries:
+                                # 打开夹爪，准备重试
+                                yield ("open_gripper", {"action_mode": now_arm})
+                                # 移动到安全位置
+                                safe_pose = list(
+                                    actor.get_pose().p + [0, 0, 0.2]
+                                ) + list(
+                                    self.robot.left_ee_link.get_entity_pose().q
+                                    if now_arm == "left"
+                                    else self.robot.right_ee_link.get_entity_pose().q
+                                )
+                                yield ("move_to_pose", {f"{now_arm}_pose": safe_pose})
+                                retry_count += 1
+                                break  # 跳出当前循环，开始下一次重试
+                            else:
+                                # 没有重试机会了，直接返回失败
+                                return now_arm
+                else:
+                    yield (action_name, action_params)
+
+        return now_arm
 
     def _get_info(self):
         block1_pose = self.block1.get_pose().p
@@ -359,3 +453,38 @@ class BlocksStackEasyTrajAugEnv(RoboTwinBaseEnv):
                 "offset": GRASP_OFFSETS.get(self.grasp_angle, [-0.05, 0, 0.02]),
             }
         return None
+
+    def evaluate_grasp(self, actor, arm):
+        """评估物体是否被成功抓取
+
+        Args:
+            actor: 要检测的物体
+            arm: 使用的机械臂 ("left" 或 "right")
+
+        Returns:
+            bool: 如果物体被成功抓取返回True，否则返回False
+        """
+        # 获取物体位置
+        object_pos = actor.get_pose().p
+
+        # 获取对应机械臂的末端执行器位置
+        if arm == "left":
+            ee_pos = self.robot.left_ee_link.get_entity_pose().p
+        else:
+            ee_pos = self.robot.right_ee_link.get_entity_pose().p
+
+        # 检查物体是否在机械臂附近（水平距离小于5cm）
+        horizontal_distance = np.linalg.norm(object_pos[:2] - ee_pos[:2])
+        is_near_arm = horizontal_distance < 0.05
+
+        # 检查物体是否被抬起（高度大于桌面+10cm）
+        is_lifted = object_pos[2] > self.table_height + 0.1
+
+        # 检查物体是否在机械臂上方（z轴距离小于10cm）
+        vertical_distance = abs(object_pos[2] - ee_pos[2])
+        is_above_arm = vertical_distance < 0.2
+
+        # 综合判断：物体在机械臂附近、被抬起、且在机械臂上方
+        is_grasped = is_near_arm and is_lifted and is_above_arm
+
+        return is_grasped

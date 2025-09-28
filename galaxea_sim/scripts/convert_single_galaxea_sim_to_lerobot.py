@@ -20,6 +20,7 @@ def main(
     use_eef: bool = False,
     use_video: bool = False,
     push_to_hub: bool = False,
+    output_dir: str = "outputs",   # 新增参数
 ):
     output_path = HF_LEROBOT_HOME / REPO_PREFIX / task
     if output_path.exists():

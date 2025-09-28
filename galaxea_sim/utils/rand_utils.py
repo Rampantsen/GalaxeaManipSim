@@ -37,9 +37,7 @@ def rand_pose(
             rotate = rotate_quat
         else:
             # 原有的组合旋转方式
-            angles = [
-                np.random.uniform(-rotate_lim[i], rotate_lim[i]) for i in range(3)
-            ]
+            angles = [np.random.uniform(0, rotate_lim[i]) for i in range(3)]
             rotate_quat = t3d.euler.euler2quat(*angles)
             rotate = t3d.quaternions.qmult(rotate, rotate_quat)
 

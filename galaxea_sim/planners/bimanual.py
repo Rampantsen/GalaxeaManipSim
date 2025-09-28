@@ -29,16 +29,22 @@ class BimanualPlanner(BasePlanner):
         right_arm_move_group,
         active_joint_names,
         control_freq,
+        robot_test,
+        env,
     ):
         self.left_arm_planner = mplib.planner.Planner(
             urdf=ASSETS_DIR / urdf_path,
             srdf=ASSETS_DIR / srdf_path if srdf_path else None,
             move_group=left_arm_move_group,
+            robot_test=robot_test,
+            env=env,
         )
         self.right_arm_planner = mplib.planner.Planner(
             urdf=ASSETS_DIR / urdf_path,
             srdf=ASSETS_DIR / srdf_path if srdf_path else None,
             move_group=right_arm_move_group,
+            robot_test=robot_test,
+            env=env,
         )
         # ---------- 全身 Pinocchio FK 初始化 ----------
         urdf_str = (ASSETS_DIR / urdf_path).read_text()
@@ -102,7 +108,7 @@ class BimanualPlanner(BasePlanner):
                 mask=self.left_arm_planner_mask,
                 verbose=verbose,
             )
-            # print(left_result)
+
             if left_result["status"] != "Success":
                 if verbose:
                     logger.error(left_result["status"])
@@ -210,6 +216,7 @@ class BimanualPlanner(BasePlanner):
             )
 
         if original_result is None:
+            # logger.error("Original trajectory planning failed")
             return None
 
         left_result, right_result = original_result
@@ -237,7 +244,6 @@ class BimanualPlanner(BasePlanner):
                 noise_std,
                 verbose,
             )
-
         return left_result, right_result
 
     def _augment_single_arm_trajectory(
@@ -414,111 +420,6 @@ class BimanualPlanner(BasePlanner):
         new_result["position"] = augmented_positions
         return new_result
 
-    def _augment_single_arm_trajectory_old(
-        self,
-        arm_result,
-        robot_qpos,
-        arm_planner,
-        arm_planner_mask,
-        num_waypoints,
-        noise_std,
-        verbose,
-    ):
-        """Augment trajectory for a single arm by adding noisy waypoints in joint space.
-
-        Notes:
-        - We operate directly on arm_result["position"], which is the same shape the
-          planner returns and which get_move_trajectory expects.
-        - Only the last K dims (K = number of actionable joints for this arm) are
-          perturbed to match how get_move_trajectory slices positions.
-        - We preserve total trajectory length by interpolating each segment with the
-          original segment length between waypoints.
-        """
-        positions = arm_result["position"]
-        if positions is None or len(positions.shape) != 2:
-            return arm_result
-
-        num_steps, dim = positions.shape
-        # Need at least start/mid/end to augment
-        if num_steps < 1:
-            return arm_result
-
-        # Number of actionable joints (for this arm)
-        arm_action_dim = int(np.sum((~arm_planner_mask).astype(np.int32)))
-        arm_action_dim = max(0, min(arm_action_dim, dim))
-        if arm_action_dim == 0:
-            return arm_result
-
-        # Choose waypoint indices (exclude 0 and last)
-        max_mid = max(0, num_steps - 2)
-        m = num_waypoints if num_waypoints is not None else np.random.randint(1, 4)
-        m = max(1, min(m, max_mid)) if max_mid > 0 else 0
-        if m == 0:
-            return arm_result
-        # Evenly spaced mid indices between 1 and num_steps-2 (inclusive)
-        candidates = np.linspace(1, num_steps - 2, m + 2)[1:-1]
-        mid_indices = np.clip(np.round(candidates).astype(np.int64), 1, num_steps - 2)
-        mid_indices = np.unique(mid_indices)
-        if mid_indices.size == 0:
-            return arm_result
-        waypoint_indices = np.concatenate([[0], mid_indices, [num_steps - 1]])
-
-        # Copy and perturb intermediate waypoints (only last K dims)
-        noisy_positions = positions.copy()
-        for idx in mid_indices:
-            noise = np.random.normal(0.0, noise_std, size=(arm_action_dim,))
-            noisy_positions[idx, -arm_action_dim:] = (
-                noisy_positions[idx, -arm_action_dim:] + noise
-            )
-
-        # Rebuild trajectory by linear interpolation between noisy waypoints,
-        # preserving each original segment length
-        augmented_list = []
-        for seg_i in range(len(waypoint_indices) - 1):
-            start_idx = waypoint_indices[seg_i]
-            end_idx = waypoint_indices[seg_i + 1]
-            seg_len = end_idx - start_idx
-            start_vec = noisy_positions[start_idx]
-            end_vec = noisy_positions[end_idx]
-
-            if seg_i == 0:
-                # include the start point for the first segment
-                if seg_len <= 0:
-                    augmented_list.append(start_vec)
-                else:
-                    # seg_len steps between start (inclusive) and end (exclusive)
-                    alphas = np.linspace(0.0, 1.0, seg_len + 1)[:-1]
-                    for a in alphas:
-                        augmented_list.append((1 - a) * start_vec + a * end_vec)
-            else:
-                if seg_len <= 0:
-                    # no gap; skip
-                    continue
-                else:
-                    # exclude the first point to avoid duplicate
-                    alphas = np.linspace(0.0, 1.0, seg_len + 1)[1:-1]
-                    # add interior points
-                    for a in alphas:
-                        augmented_list.append((1 - a) * start_vec + a * end_vec)
-
-            # Always push the exact end waypoint for this segment (except for the very last end, which will be added by next segment or after loop)
-            if seg_i < len(waypoint_indices) - 2:
-                augmented_list.append(noisy_positions[end_idx])
-
-        augmented_positions = np.stack(augmented_list, axis=0)
-        # Safety: ensure same length as original
-        if augmented_positions.shape[0] != num_steps:
-            # Fallback: simple copy if shape mismatch (should be rare)
-            if verbose:
-                logger.warning(
-                    f"Augmented length {augmented_positions.shape[0]} != original {num_steps}, skipping augmentation"
-                )
-            return arm_result
-
-        new_result = dict(arm_result)
-        new_result["position"] = augmented_positions
-        return new_result
-
     def get_move_trajectory(self, init_pos, left_result=None, right_result=None):
         n_step_left = left_result["position"].shape[0] if left_result else 0
         n_step_right = right_result["position"].shape[0] if right_result else 0
@@ -587,6 +488,7 @@ class BimanualPlanner(BasePlanner):
             )
             if result is None:
                 return None
+            # if result["status"] != "Success":
             return self.get_move_trajectory(init_pos, *result)
         elif method in ["open_gripper", "close_gripper"]:
             return self.get_gripper_trajectory(init_pos, method, kwargs)

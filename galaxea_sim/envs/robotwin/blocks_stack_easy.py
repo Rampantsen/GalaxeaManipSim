@@ -16,11 +16,12 @@ class BlocksStackEasyEnv(RoboTwinBaseEnv):
     def _rand_pose(self):
         return rand_pose(
             xlim=[-0.12, -0.01],
-            ylim=[-0.25, 0.25],
+            ylim=[-0.4, 0.4],
             zlim=[self.block_half_size],
             qpos=[0.27, 0.27, 0.65, 0.65],
             rotate_rand=True,
-            rotate_lim=[0, 0.1, 0],
+            rotate_lim=[0, 0, np.pi],  # 绕z轴随机旋转-π到π弧度
+            z_rotate_only=True,  # 只绕z轴旋转
         )
 
     def _setup_block1(self):
