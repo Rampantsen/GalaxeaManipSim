@@ -75,7 +75,7 @@ def main(task: str, feature: str):
     dataset = LeRobotDataset(
         f"galaxea/{dataset_name}", delta_timestamps=delta_timestamps
     )
-    num_epochs = 300
+    num_epochs = 150
     batch_size = 32
     training_steps = num_epochs * len(dataset) // batch_size
     log_freq = 50
@@ -130,6 +130,8 @@ def main(task: str, feature: str):
 
     # Save a policy checkpoint.
     policy.save_pretrained(output_directory / "checkpoint-final")
+    with open(output_directory / f"checkpoint-final/dataset_metadata.pkl", "wb") as f:
+        pickle.dump(dataset_metadata, f)
 
 
 if __name__ == "__main__":
