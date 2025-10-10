@@ -22,6 +22,7 @@ def main(
     target_controller_type: str = "bimanual_relaxed_ik",
     feature: Literal[
         "no-retry",
+        "no-grasp_sample",
         "traj_augmented_only",
         "grasp_sample_only",
         "retry_only",

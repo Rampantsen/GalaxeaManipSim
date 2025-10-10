@@ -23,6 +23,7 @@ def main(
     obs_mode: Literal["state", "image"] = "state",
     feature: Literal[
         "no-retry",
+        "no-grasp_sample",
         "traj_augmented_only",
         "grasp_sample_only",
         "retry_only",
