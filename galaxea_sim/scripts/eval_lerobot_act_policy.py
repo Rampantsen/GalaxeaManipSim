@@ -18,7 +18,8 @@ import time
 
 def evaluate(
     task: str,
-    pretrained_policy_path: str,
+    pretrained_policy_path: str = "/home/sen/workspace/galaxea/GalaxeaManipSim/outputs/ACT/R1ProBlocksStackEasy-traj_aug/all-20251010214500/checkpoints/last/pretrained_model",
+    dataset_repo_id: str = "galaxea/R1ProBlocksStackEasy-traj_aug/all",
     target_controller_type: str = "bimanual_relaxed_ik",
     device: str = "cuda",
     headless: bool = True,
@@ -28,16 +29,28 @@ def evaluate(
 ):
     """在模拟环境中多次评估预训练的 ACT 策略。"""
     output_directory = (
-        Path(pretrained_policy_path) / "evaluations" / time.strftime("%Y%m%d_%H%M%S")
+        Path(pretrained_policy_path).parent.parent
+        / "evaluations"
+        / time.strftime("%Y%m%d_%H%M%S")
     )
     output_directory.mkdir(parents=True, exist_ok=True)
 
     # 加载数据集元数据和策略
-    with open(Path(pretrained_policy_path) / "dataset_metadata.pkl", "rb") as f:
-        dataset_metadata: LeRobotDatasetMetadata = pickle.load(f)
+    # 检查是否存在旧格式的 dataset_metadata.pkl
+    # metadata_pkl_path = Path(pretrained_policy_path) / "dataset_metadata.pkl"
+    # if metadata_pkl_path.exists():
+    #     with open(metadata_pkl_path, "rb") as f:
+    #         dataset_metadata: LeRobotDatasetMetadata = pickle.load(f)
+    #     dataset_stats = dataset_metadata.stats
+    # else:
+    #     # 如果没有 pkl 文件，从数据集repo加载元数据
+    #     print(f"未找到 dataset_metadata.pkl，从数据集 {dataset_repo_id} 加载元数据...")
+    dataset_metadata = LeRobotDatasetMetadata(dataset_repo_id)
+    dataset_stats = dataset_metadata.stats
+
     policy = ACTPolicy.from_pretrained(
         pretrained_policy_path,
-        dataset_stats=dataset_metadata.stats,
+        dataset_stats=dataset_stats,
     )
     policy.eval()
     policy.to(device)
@@ -48,18 +61,18 @@ def evaluate(
     if temporal_ensemble:
         from lerobot.policies.act.modeling_act import ACTTemporalEnsembler
 
-        policy.config.temporal_ensemble_coeff = 0.01
+        policy.config.temporal_ensemble_coeff = 0.1
         policy.config.n_action_steps = 1
         policy.temporal_ensembler = ACTTemporalEnsembler(
-            temporal_ensemble_coeff=0.01, chunk_size=policy.config.chunk_size
+            temporal_ensemble_coeff=0.1, chunk_size=policy.config.chunk_size
         )
 
     infos = []
     env = gym.make(
         task,
-        control_freq=15,
+        control_freq=15,  # 必须与训练数据的 fps 匹配！
         headless=headless,
-        max_episode_steps=800,
+        max_episode_steps=600,
         controller_type=target_controller_type,
     )
 

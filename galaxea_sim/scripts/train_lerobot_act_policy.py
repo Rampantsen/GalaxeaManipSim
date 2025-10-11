@@ -40,30 +40,18 @@ def main(task: str, feature: str):
         input_features=input_features,
         output_features=output_features,
         # 训练参数
-        optimizer_lr=1e-5,
-        optimizer_weight_decay=1e-4,
+        optimizer_lr=3e-05,
         # 观察和动作参数
         n_obs_steps=1,
         chunk_size=30,  # ACT 预测的动作序列长度
         n_action_steps=30,  # 每次推理使用的动作步数
         # Transformer 架构参数
-        dim_model=512,  # Transformer 主隐藏层维度
-        dim_feedforward=3200,
-        n_encoder_layers=4,
-        n_decoder_layers=1,  # 原始实现虽然是7层，但因bug只使用第一层
-        n_heads=8,
-        pre_norm=False,
-        feedforward_activation="relu",
+        dim_model=512,
         # VAE 参数
         use_vae=True,
-        latent_dim=32,
-        n_vae_encoder_layers=4,
-        # 训练参数
-        dropout=0.1,
         kl_weight=10.0,
         # 视觉编码器参数
         vision_backbone="resnet18",
-        pretrained_backbone_weights="ResNet18_Weights.IMAGENET1K_V1",
     )
 
     # 使用配置和数据集统计信息实例化策略
@@ -92,8 +80,8 @@ def main(task: str, feature: str):
     batch_size = 16  # ACT 通常使用较小的 batch size
     # training_steps = num_epochs * len(dataset) // batch_size
     training_steps = 100000
-    log_freq = 50
-    save_freq = 5000
+    log_freq = 5
+    save_freq = 10000
 
     print(f"训练 {training_steps} 步。")
     print(f"每 {log_freq} 步记录一次。")
@@ -102,7 +90,7 @@ def main(task: str, feature: str):
     optimizer = torch.optim.AdamW(policy.parameters(), lr=cfg.optimizer_lr)
     dataloader = torch.utils.data.DataLoader(
         dataset,
-        num_workers=4,
+        num_workers=8,
         batch_size=batch_size,
         shuffle=True,
         pin_memory=device.type != "cpu",

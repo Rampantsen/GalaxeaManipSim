@@ -35,8 +35,9 @@ class BlocksStackEasyTrajAugEnv(RoboTwinBaseEnv):
 
     def _rand_pose(self):
         return rand_pose(
-            xlim=[-0.12, -0.01],
-            ylim=[-0.25, 0.25],
+            # xlim=[-0.12, -0.01],
+            xlim=[-0.1, -0.02],
+            ylim=[-0.15, 0.15],
             zlim=[self.block_half_size],
             qpos=[1, 0, 0, 0],
             rotate_rand=True,
