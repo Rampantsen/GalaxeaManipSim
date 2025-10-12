@@ -172,7 +172,7 @@ def evaluate(
             print(f"视频已保存至 {video_path}")
 
     # 计算并打印统计信息
-    success_count = sum(1 for info in infos if info.get("is_success", False))
+    success_count = sum(1 for info in infos if info.get("success", False))
     success_rate = success_count / num_evaluations
     print(f"\n评估完成:")
     print(f"总评估次数: {num_evaluations}")

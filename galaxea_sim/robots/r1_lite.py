@@ -5,29 +5,47 @@ from galaxea_sim.utils.sapien_utils import get_link_by_name, add_mounted_camera_
 
 from .bimanual import BimanualRobot
 
+
 class R1LiteRobot(BimanualRobot):
     name: str = "r1_lite"
+
     def __init__(
-        self, 
+        self,
         scene: sapien.Scene,
-        urdf_path = "r1_lite/robot.urdf",
-        robot_origin_xyz = [0, 0, 0],
-        robot_origin_quat = [1, 0, 0, 0],
-        joint_stiffness = 1000,
-        joint_damping = 200,       
-        init_qpos = [
-            0, 0, 0,
-            0, 0, 0, 0, 0, 0,
-            0, 0,
-            0, 0, 0, 0, 0, 0,
-            0, 0,
+        urdf_path="r1_lite/robot.urdf",
+        robot_origin_xyz=[0, 0, 0],
+        robot_origin_quat=[1, 0, 0, 0],
+        joint_stiffness=1000,
+        joint_damping=200,
+        init_qpos=[
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
         ],
         touch_link_names=[
-            "left_gripper_finger_link1", "left_gripper_finger_link2",
-            "right_gripper_finger_link1", "right_gripper_finger_link2"
+            "left_gripper_finger_link1",
+            "left_gripper_finger_link2",
+            "right_gripper_finger_link1",
+            "right_gripper_finger_link2",
         ],
         left_arm_joint_key: str = "left_arm",
-        right_arm_joint_key: str ="right_arm",
+        right_arm_joint_key: str = "right_arm",
         torso_joint_key: str = "torso",
         left_gripper_joint_key: str = "left_gripper",
         right_gripper_joint_key: str = "right_gripper",
@@ -55,11 +73,11 @@ class R1LiteRobot(BimanualRobot):
             left_relaxed_ik_setting_path=left_relaxed_ik_setting_path,
             right_relaxed_ik_setting_path=right_relaxed_ik_setting_path,
         )
-        
+
     @property
     def gripper_finger_sign(self):
         return [1, -1]
-    
+
     def _add_sensors(self):
         # head camera
         self.head_camera = add_mounted_camera_to_scene(
@@ -67,7 +85,7 @@ class R1LiteRobot(BimanualRobot):
             mount=get_link_by_name(self.links, "camera_head_left_link").entity,
             name="head",
             width=1280,
-            height=720, 
+            height=720,
             local_pose=sapien.Pose([0, 0, 0], np.array([1, 1, -1, 1]) / 2),
         )
         self.head_camera.set_fovx(np.deg2rad(106.09))
