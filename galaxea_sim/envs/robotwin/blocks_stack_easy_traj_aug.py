@@ -45,8 +45,8 @@ class BlocksStackEasyTrajAugEnv(RoboTwinBaseEnv):
 
     def _rand_pose(self):
         return rand_pose(
-            xlim=[-0.12, -0.03],
-            ylim=[-0.15, 0.15],
+            xlim=[-0.12, -0.01],
+            ylim=[-0.20, 0.20],
             zlim=[self.block_half_size],
             qpos=[1, 0, 0, 0],
             rotate_rand=True,
@@ -208,7 +208,7 @@ class BlocksStackEasyTrajAugEnv(RoboTwinBaseEnv):
         Args:
             actor: 要移动的物体
             id: 物体ID
-            last_arm: 上次使用的机械臂
+            last_arm: 上次使用的机械臂（未使用，保留以兼容）
             tried_angles: 已经尝试过的抓取角度列表（用于retry时排除）
         """
         # 随机选择一个抓取角度（例如45度）
@@ -250,6 +250,8 @@ class BlocksStackEasyTrajAugEnv(RoboTwinBaseEnv):
                 0.01,
                 self.table_height + id * self.block_half_size * 2 + 0.1,
             ] + target_qpose
+            now_arm = "right"
+            init_pose = self.robot.right_init_ee_pose
         else:
             grasp_euler = actor_euler - math.pi / 2
             (grasp_qpose := sapien.Pose()).set_rpy(
@@ -270,6 +272,8 @@ class BlocksStackEasyTrajAugEnv(RoboTwinBaseEnv):
                 -0.01,
                 self.table_height + id * self.block_half_size * 2 + 0.1,
             ] + target_qpose
+            now_arm = "left"
+            init_pose = self.robot.left_init_ee_pose
 
         self.grasp_euler = grasp_euler
         target_pose = self.tf_to_grasp(target_pose, self.grasp_angle)
@@ -294,86 +298,24 @@ class BlocksStackEasyTrajAugEnv(RoboTwinBaseEnv):
         self._update_visual_gripper_pose(
             self.target_place_marker_entities, target_sapien_pose
         )
-        if actor_pos[1] < 0:
-            now_arm = "right"
-            if now_arm == last_arm or last_arm is None:
-                if now_arm == last_arm:
-                    pose0 = list(
-                        self.robot.right_ee_link.get_entity_pose().p + [0, 0, 0.05]
-                    ) + list(self.robot.right_ee_link.get_entity_pose().q)
-                    if self.enable_traj_augmented:
-                        substeps.append(
-                            ("move_to_pose_traj_augmented", {"right_pose": pose0})
-                        )
-                    else:
-                        substeps.append(("move_to_pose", {"right_pose": pose0}))
-                substeps.append(
-                    (
-                        (
-                            "move_to_pose_traj_augmented"
-                            if self.enable_traj_augmented
-                            else "move_to_pose"
-                        ),
-                        {"right_pose": deepcopy(pre_grasp_pose)},
-                    )
-                )
-            else:
-                substeps.append(
-                    (
-                        (
-                            "move_to_pose_traj_augmented"
-                            if self.enable_traj_augmented
-                            else "move_to_pose"
-                        ),
-                        {
-                            "right_pose": pre_grasp_pose,
-                            "left_pose": self.robot.left_init_ee_pose,
-                        },
-                    )
-                )
-        else:
-            now_arm = "left"
-            if now_arm == last_arm or last_arm is None:
-                if now_arm == last_arm:
-                    pose0 = list(
-                        self.robot.left_ee_link.get_entity_pose().p + [0, 0, 0.05]
-                    ) + list(self.robot.left_ee_link.get_entity_pose().q)
-                    substeps.append(
-                        (
-                            (
-                                "move_to_pose_traj_augmented"
-                                if self.enable_traj_augmented
-                                else "move_to_pose"
-                            ),
-                            {"left_pose": pose0},
-                        )
-                    )
-                substeps.append(
-                    (
-                        (
-                            "move_to_pose_traj_augmented"
-                            if self.enable_traj_augmented
-                            else "move_to_pose"
-                        ),
-                        {"left_pose": deepcopy(pre_grasp_pose)},
-                    )
-                )
-            else:
-                substeps.append(
-                    (
-                        (
-                            "move_to_pose_traj_augmented"
-                            if self.enable_traj_augmented
-                            else "move_to_pose"
-                        ),
-                        {
-                            "left_pose": pre_grasp_pose,
-                            "right_pose": self.robot.right_init_ee_pose,
-                        },
-                    )
-                )
 
+        # 单个手臂独自进行抓取
+        # 1. 移动到预抓取位置
+        substeps.append(
+            (
+                (
+                    "move_to_pose_traj_augmented"
+                    if self.enable_traj_augmented
+                    else "move_to_pose"
+                ),
+                {f"{now_arm}_pose": deepcopy(pre_grasp_pose)},
+            )
+        )
+
+        # 2. 打开夹爪
         substeps.append(("open_gripper", {"action_mode": now_arm}))
+
+        # 3. 下降到抓取位置
         pre_grasp_pose[2] -= 0.15
         substeps.append(
             (
@@ -385,7 +327,11 @@ class BlocksStackEasyTrajAugEnv(RoboTwinBaseEnv):
                 {f"{now_arm}_pose": deepcopy(pre_grasp_pose)},
             )
         )
+
+        # 4. 关闭夹爪
         substeps.append(("close_gripper", {"action_mode": now_arm}))
+
+        # 5. 抬起到预抓取高度
         pre_grasp_pose[2] += 0.15
         substeps.append(
             (
@@ -397,6 +343,8 @@ class BlocksStackEasyTrajAugEnv(RoboTwinBaseEnv):
                 {f"{now_arm}_pose": deepcopy(pre_grasp_pose)},
             )
         )
+
+        # 6. 移动到目标位置
         substeps.append(
             (
                 (
@@ -405,8 +353,10 @@ class BlocksStackEasyTrajAugEnv(RoboTwinBaseEnv):
                     else "move_to_pose"
                 ),
                 {f"{now_arm}_pose": deepcopy(target_pose)},
-            )  # 长距离移动到目标位置使用轨迹增强
+            )
         )
+
+        # 7. 下降放置
         target_pose[2] -= 0.05
         substeps.append(
             (
@@ -418,9 +368,25 @@ class BlocksStackEasyTrajAugEnv(RoboTwinBaseEnv):
                 {f"{now_arm}_pose": deepcopy(target_pose)},
             )
         )
+
+        # 8. 打开夹爪释放物体
         substeps.append(("open_gripper", {"action_mode": now_arm}))
+
+        # 9. 抬起一点
         target_pose[2] += 0.1
         substeps.append(("move_to_pose", {f"{now_arm}_pose": deepcopy(target_pose)}))
+
+        # 10. 收回到初始位置
+        substeps.append(
+            (
+                (
+                    "move_to_pose_traj_augmented"
+                    if self.enable_traj_augmented
+                    else "move_to_pose"
+                ),
+                {f"{now_arm}_pose": init_pose},
+            )
+        )
 
         return substeps, now_arm
 
