@@ -6,14 +6,14 @@ import sapien
 import numpy as np
 import transforms3d
 
-from galaxea_sim.utils.robotwin_utils import create_box
+from galaxea_sim.utils.robotwin_utils import create_box, create_visual_ee_link
 from galaxea_sim.utils.rand_utils import rand_pose
 from .robotwin_base import RoboTwinBaseEnv
 import os
 
 # 定义可选的抓取角度
 # GRASP_ANGLES = [0, math.pi / 6, math.pi / 4, math.pi / 3]
-GRASP_ANGLES = [math.pi / 4]
+GRASP_ANGLES = [math.pi / 6, math.pi / 4, math.pi / 3]
 # 定义每个抓取角度对应的偏移量 (x, y, z)
 GRASP_OFFSETS = {
     math.pi / 6: [-0.045, 0, 0.025],  # 30度抓取
@@ -32,6 +32,79 @@ class BlocksStackEasyTrajAugEnv(RoboTwinBaseEnv):
         self.enable_retry = enable_retry  # 控制是否启用retry逻辑
         self.enable_traj_augmented = enable_traj_augmented  # 控制是否启用轨迹增强
 
+        # 创建可视化标记来显示目标位置
+        self._setup_visual_markers()
+
+    def _setup_visual_markers(self):
+        """创建可视化标记来显示夹爪目标位置"""
+        # 初始位置在桌面下方（不可见）
+        initial_pose = sapien.Pose(p=[0, 0, -1])
+
+        # 创建预抓取位置夹爪可视化（蓝色半透明）
+        self.pre_grasp_marker_entities = create_visual_ee_link(
+            scene=self._scene,
+            pose=initial_pose,
+            color=(0.2, 0.4, 1.0, 0.5),  # 蓝色半透明
+            name="pre_grasp_gripper",
+            gripper_width=0.08,
+            gripper_depth=0.04,
+            finger_length=0.06,
+        )
+
+        # 创建抓取位置夹爪可视化（青色半透明）
+        self.grasp_marker_entities = create_visual_ee_link(
+            scene=self._scene,
+            pose=initial_pose,
+            color=(0.0, 0.8, 0.8, 0.6),  # 青色半透明
+            name="grasp_gripper",
+            gripper_width=0.08,
+            gripper_depth=0.04,
+            finger_length=0.06,
+        )
+
+        # 创建目标放置位置夹爪可视化（黄色半透明）
+        self.target_place_marker_entities = create_visual_ee_link(
+            scene=self._scene,
+            pose=initial_pose,
+            color=(1.0, 0.8, 0.0, 0.5),  # 黄色半透明
+            name="target_place_gripper",
+            gripper_width=0.08,
+            gripper_depth=0.04,
+            finger_length=0.06,
+        )
+
+    def _update_visual_gripper_pose(self, entities: list, pose: sapien.Pose):
+        """更新虚拟夹爪的所有部件位置
+
+        Args:
+            entities: 夹爪实体列表 [base, left_finger, right_finger, connector]
+            pose: 目标位姿
+        """
+        if len(entities) != 4:
+            return
+
+        gripper_width = 0.08
+        finger_length = 0.06
+
+        # 更新基座
+        entities[0].set_pose(pose)
+
+        # 更新左手指
+        left_finger_pose = pose * sapien.Pose(
+            p=[0, gripper_width / 2 - 0.008, -finger_length / 2]
+        )
+        entities[1].set_pose(left_finger_pose)
+
+        # 更新右手指
+        right_finger_pose = pose * sapien.Pose(
+            p=[0, -gripper_width / 2 + 0.008, -finger_length / 2]
+        )
+        entities[2].set_pose(right_finger_pose)
+
+        # 更新连接杆
+        connector_pose = pose * sapien.Pose(p=[0, 0, -0.01])
+        entities[3].set_pose(connector_pose)
+
     def _rand_pose(self):
         return rand_pose(
             xlim=[-0.12, -0.01],
@@ -39,7 +112,7 @@ class BlocksStackEasyTrajAugEnv(RoboTwinBaseEnv):
             zlim=[self.block_half_size],
             qpos=[1, 0, 0, 0],
             rotate_rand=True,
-            rotate_lim=[0, 0, np.pi * 2],  # 绕z轴随机旋转-π到π弧度
+            rotate_lim=[0, 0, np.pi],  # 绕z轴随机旋转-π到π弧度
             z_rotate_only=True,  # 只绕z轴旋转
         )
 
@@ -157,6 +230,7 @@ class BlocksStackEasyTrajAugEnv(RoboTwinBaseEnv):
         actor_rpy = actor.get_pose().get_rpy()
         actor_pos = actor.get_pose().p
         actor_euler = math.fmod(actor_rpy[2], math.pi / 2)
+        # print(f"actor_euler: {actor_euler}")
         if actor_pos[1] < 0:
             # closer to right arm
             grasp_euler = actor_euler
@@ -204,6 +278,24 @@ class BlocksStackEasyTrajAugEnv(RoboTwinBaseEnv):
         substeps = []
         pre_grasp_pose = list(actor_pos + [0, 0, 0.2]) + grasp_qpose
         pre_grasp_pose = self.tf_to_grasp(pre_grasp_pose, self.grasp_angle)
+
+        # 更新可视化标记：显示预抓取位置（蓝色半透明夹爪）
+        pre_grasp_sapien_pose = sapien.Pose(p=pre_grasp_pose[:3], q=pre_grasp_pose[3:7])
+        self._update_visual_gripper_pose(
+            self.pre_grasp_marker_entities, pre_grasp_sapien_pose
+        )
+
+        # 计算并显示抓取位置（青色半透明夹爪）- 预抓取位置下降0.15m
+        grasp_pose_vis = pre_grasp_pose.copy()
+        grasp_pose_vis[2] -= 0.15
+        grasp_sapien_pose = sapien.Pose(p=grasp_pose_vis[:3], q=grasp_pose_vis[3:7])
+        self._update_visual_gripper_pose(self.grasp_marker_entities, grasp_sapien_pose)
+
+        # 更新目标放置位置标记（黄色半透明夹爪）
+        target_sapien_pose = sapien.Pose(p=target_pose[:3], q=target_pose[3:7])
+        self._update_visual_gripper_pose(
+            self.target_place_marker_entities, target_sapien_pose
+        )
         if actor_pos[1] < 0:
             now_arm = "right"
             if now_arm == last_arm or last_arm is None:
