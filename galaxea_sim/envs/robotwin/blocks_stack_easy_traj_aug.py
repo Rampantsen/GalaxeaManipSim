@@ -13,7 +13,7 @@ import os
 
 # 定义可选的抓取角度
 # GRASP_ANGLES = [0, math.pi / 6, math.pi / 4, math.pi / 3]
-GRASP_ANGLES = [math.pi / 4]
+GRASP_ANGLES = [math.pi / 6, math.pi / 4, math.pi / 3]
 # 定义每个抓取角度对应的偏移量 (x, y, z)
 GRASP_OFFSETS = {
     math.pi / 6: [-0.045, 0, 0.025],  # 30度抓取
@@ -161,58 +161,46 @@ class BlocksStackEasyTrajAugEnv(RoboTwinBaseEnv):
         new_pose = sapien.Pose(matrix=new_pos)
         return list(new_pose.p) + list(new_pose.q)
 
-    def try_grasp_pose(self, actor_euler: float, actor_pos: np.ndarray, arm: str):
-        """尝试生成抓取姿态并检查是否可行
+    def select_grasp_angle(self, actor_rpy, tried_angles=None):
+        """根据物体姿态和已尝试的角度，选择下一个候选抓取角度
 
         Args:
-            actor_euler: 候选抓取角度
-            actor_pos: 物体位置
-            arm: 使用的机械臂 ("left" 或 "right")
+            actor_rpy: 物体的姿态（roll, pitch, yaw）
+            tried_angles: 已经尝试过的角度列表
 
         Returns:
-            tuple: (是否可行, 抓取姿态, 目标姿态) 或 (False, None, None)
+            float: 选择的抓取角度，如果所有角度都尝试过则返回None
         """
-        try:
-            if arm == "right":
-                if actor_pos[1] < 0:
-                    grasp_euler = actor_euler
-                else:
-                    grasp_euler = actor_euler - math.pi / 2
+        # 生成多个候选抓取角度（包括±90度）
+        base_euler = actor_rpy[2]  # 使用原始角度
+        all_candidate_angles = [
+            math.fmod(base_euler, math.pi / 2),  # 原始角度
+            math.fmod(base_euler, math.pi / 2) + math.pi / 2,  # +90度
+            math.fmod(base_euler, math.pi / 2) - math.pi / 2,  # -90度
+        ]
 
-                (grasp_qpose := sapien.Pose()).set_rpy(
-                    rpy=(np.array([0, 0, grasp_euler]) + self.robot.right_ee_rpy_offset)
-                )
-                grasp_qpose = self.rot_down_grip_pose(
-                    grasp_qpose, self.grasp_angle
-                ).q.tolist()
+        # 过滤掉已经尝试过的角度
+        if tried_angles is None:
+            tried_angles = []
 
-                pre_grasp_pose = list(actor_pos + [0, 0, 0.2]) + grasp_qpose
-                pre_grasp_pose = self.tf_to_grasp(pre_grasp_pose, self.grasp_angle)
+        candidate_angles = [
+            angle
+            for angle in all_candidate_angles
+            if not any(abs(angle - tried) < 0.01 for tried in tried_angles)
+        ]
 
-                # 简单的可行性检查：确保位置在合理范围内
-                if pre_grasp_pose[2] > 0.1 and pre_grasp_pose[2] < 0.8:
-                    return True, grasp_euler, pre_grasp_pose
-            else:  # left arm
-                grasp_euler = actor_euler - math.pi / 2
-                (grasp_qpose := sapien.Pose()).set_rpy(
-                    rpy=(np.array([0, 0, grasp_euler]) + self.robot.right_ee_rpy_offset)
-                )
-                grasp_qpose = self.rot_down_grip_pose(
-                    grasp_qpose, self.grasp_angle
-                ).q.tolist()
+        if not candidate_angles:
+            print("Warning: All candidate angles have been tried")
+            return None
 
-                pre_grasp_pose = list(actor_pos + [0, 0, 0.2]) + grasp_qpose
-                pre_grasp_pose = self.tf_to_grasp(pre_grasp_pose, self.grasp_angle)
-
-                # 简单的可行性检查
-                if pre_grasp_pose[2] > 0.1 and pre_grasp_pose[2] < 0.8:
-                    return True, grasp_euler, pre_grasp_pose
-
-        except Exception as e:
-            # 如果生成姿态时出错，说明这个角度不可行
-            pass
-
-        return False, None, None
+        # 返回第一个未尝试的候选角度
+        selected = candidate_angles[0]
+        print(
+            f"Selected grasp angle: {math.degrees(selected):.1f}° from available candidates: "
+            f"{[f'{math.degrees(a):.1f}°' for a in candidate_angles]} "
+            f"(already tried: {[f'{math.degrees(a):.1f}°' for a in tried_angles] if tried_angles else 'none'})"
+        )
+        return selected
 
     def move_block(self, actor: sapien.Entity, id, last_arm=None, tried_angles=None):
         """移动方块到目标位置
@@ -223,58 +211,23 @@ class BlocksStackEasyTrajAugEnv(RoboTwinBaseEnv):
             last_arm: 上次使用的机械臂
             tried_angles: 已经尝试过的抓取角度列表（用于retry时排除）
         """
-        # 随机选择一个抓取角度
+        # 随机选择一个抓取角度（例如45度）
         self.grasp_angle = random.choice(GRASP_ANGLES)
 
         actor_rpy = actor.get_pose().get_rpy()
         actor_pos = actor.get_pose().p
 
-        # 生成多个候选抓取角度（包括±90度）
-        base_euler = actor_rpy[2]  # 使用原始角度
-        all_candidate_angles = [
-            math.fmod(base_euler, math.pi / 2),  # 原始角度
-            math.fmod(base_euler, math.pi / 2) + math.pi / 2,
-            math.fmod(base_euler, math.pi / 2) - math.pi / 2,
-        ]
+        # 选择一个候选抓取角度（会自动排除已尝试过的角度）
+        actor_euler = self.select_grasp_angle(actor_rpy, tried_angles)
 
-        # 过滤掉已经尝试过的角度
-        if tried_angles is None:
-            tried_angles = []
-        candidate_angles = [
-            angle
-            for angle in all_candidate_angles
-            if not any(abs(angle - tried) < 0.01 for tried in tried_angles)
-        ]
-
-        # 如果所有角度都尝试过了，重新使用所有候选
-        if not candidate_angles:
-            candidate_angles = all_candidate_angles
-            print("Warning: All angles have been tried, reusing all candidates")
-
-        # 确定使用哪个机械臂
-        arm = "right" if actor_pos[1] < 0 else "left"
-
-        # 尝试每个候选角度，找到第一个有解的
-        actor_euler = None
-        selected_candidate = None
-        for candidate in candidate_angles:
-            is_feasible, grasp_euler, _ = self.try_grasp_pose(candidate, actor_pos, arm)
-            if is_feasible:
-                actor_euler = candidate
-                selected_candidate = candidate
-                break
-
-        # 如果所有候选都不可行，使用第一个候选作为后备
+        # 如果所有角度都尝试过了，使用第一个作为后备
         if actor_euler is None:
-            actor_euler = candidate_angles[0]
-            selected_candidate = candidate_angles[0]
+            base_euler = actor_rpy[2]
+            actor_euler = math.fmod(base_euler, math.pi / 2)
+            print("Using fallback angle as all angles have been exhausted")
 
         # 保存当前尝试的角度
-        self.last_tried_angle = selected_candidate
-
-        print(
-            f"Selected grasp angle: {math.degrees(selected_candidate):.1f}° from candidates: {[f'{math.degrees(a):.1f}°' for a in candidate_angles]}"
-        )
+        self.last_tried_angle = actor_euler
 
         if actor_pos[1] < 0:
             # closer to right arm
