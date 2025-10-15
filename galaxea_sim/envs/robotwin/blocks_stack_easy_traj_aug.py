@@ -13,7 +13,7 @@ import os
 
 # 定义可选的抓取角度
 # GRASP_ANGLES = [0, math.pi / 6, math.pi / 4, math.pi / 3]
-GRASP_ANGLES = [math.pi / 4]
+GRASP_ANGLES = [math.pi / 6, math.pi / 4, math.pi / 3]
 # 定义每个抓取角度对应的偏移量 (x, y, z)
 GRASP_OFFSETS = {
     math.pi / 6: [-0.045, 0, 0.025],  # 30度抓取
@@ -30,9 +30,9 @@ class BlocksStackEasyTrajAugEnv(RoboTwinBaseEnv):
         self,
         *args,
         enable_retry=False,
-        enable_traj_augmented=False,
+        enable_traj_augmented=True,
         enable_visual=True,
-        enable_grasp_sample=False,
+        enable_grasp_sample=True,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)

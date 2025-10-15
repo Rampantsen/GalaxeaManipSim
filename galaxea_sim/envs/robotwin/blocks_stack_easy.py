@@ -15,8 +15,8 @@ class BlocksStackEasyEnv(RoboTwinBaseEnv):
 
     def _rand_pose(self):
         return rand_pose(
-            xlim=[-0.12, -0.03],
-            ylim=[-0.20, 0.20],
+            xlim=[-0.12, -0.01],
+            ylim=[-0.25, 0.25],
             zlim=[self.block_half_size],
             qpos=[0.27, 0.27, 0.65, 0.65],
             rotate_rand=True,
