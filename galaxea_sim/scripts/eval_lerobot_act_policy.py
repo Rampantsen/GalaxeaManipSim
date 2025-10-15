@@ -6,6 +6,7 @@ import pickle
 import torch
 import tyro
 import cv2
+import random
 
 from lerobot.policies.act.modeling_act import ACTPolicy
 from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata
@@ -26,8 +27,16 @@ def evaluate(
     num_evaluations: int = 100,
     temporal_ensemble: bool = True,  # ACT 特有的时序集成
     save_video: bool = True,
+    seed: int = 20251015,  # 添加seed参数
 ):
     """在模拟环境中多次评估预训练的 ACT 策略。"""
+    # 设置全局随机种子以确保可复现性
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
     output_directory = (
         Path(pretrained_policy_path).parent.parent
         / "evaluations"
@@ -35,16 +44,6 @@ def evaluate(
     )
     output_directory.mkdir(parents=True, exist_ok=True)
 
-    # 加载数据集元数据和策略
-    # 检查是否存在旧格式的 dataset_metadata.pkl
-    # metadata_pkl_path = Path(pretrained_policy_path) / "dataset_metadata.pkl"
-    # if metadata_pkl_path.exists():
-    #     with open(metadata_pkl_path, "rb") as f:
-    #         dataset_metadata: LeRobotDatasetMetadata = pickle.load(f)
-    #     dataset_stats = dataset_metadata.stats
-    # else:
-    #     # 如果没有 pkl 文件，从数据集repo加载元数据
-    #     print(f"未找到 dataset_metadata.pkl，从数据集 {dataset_repo_id} 加载元数据...")
     dataset_metadata = LeRobotDatasetMetadata(dataset_repo_id)
     dataset_stats = dataset_metadata.stats
 
@@ -72,7 +71,7 @@ def evaluate(
         task,
         control_freq=15,  # 必须与训练数据的 fps 匹配！
         headless=headless,
-        max_episode_steps=600,
+        max_episode_steps=1000,
         controller_type=target_controller_type,
     )
 
@@ -80,7 +79,7 @@ def evaluate(
         print(f"开始评估 {eval_idx + 1}/{num_evaluations}")
 
         policy.reset()
-        numpy_observation, info = env.reset(seed=42)
+        numpy_observation, info = env.reset(seed=seed + eval_idx)
         if save_video:
             env.render()
 

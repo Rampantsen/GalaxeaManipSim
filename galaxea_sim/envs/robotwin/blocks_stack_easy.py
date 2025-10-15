@@ -15,8 +15,8 @@ class BlocksStackEasyEnv(RoboTwinBaseEnv):
 
     def _rand_pose(self):
         return rand_pose(
-            xlim=[-0.12, -0.01],
-            ylim=[-0.25, 0.25],
+            xlim=[-0.12, -0.03],
+            ylim=[-0.20, 0.20],
             zlim=[self.block_half_size],
             qpos=[0.27, 0.27, 0.65, 0.65],
             rotate_rand=True,
@@ -155,77 +155,59 @@ class BlocksStackEasyEnv(RoboTwinBaseEnv):
         substeps = []
         pre_grasp_pose = list(actor_pos + [0, 0, 0.2]) + grasp_qpose
         pre_grasp_pose = self.tf_to_grasp(pre_grasp_pose)
+
+        # 确定使用哪只手臂
         if actor_pos[1] < 0:
             now_arm = "right"
-            if now_arm == last_arm or last_arm is None:
-                if now_arm == last_arm:
-                    pose0 = list(
-                        self.robot.right_ee_link.get_entity_pose().p + [0, 0, 0.05]
-                    ) + list(self.robot.right_ee_link.get_entity_pose().q)
-                    substeps.append(("move_to_pose", {"right_pose": pose0}))
-                substeps.append(
-                    (
-                        "move_to_pose",
-                        {"right_pose": deepcopy(pre_grasp_pose)},
-                    )
-                )
-            else:
-                substeps.append(
-                    (
-                        "move_to_pose",
-                        {
-                            "right_pose": pre_grasp_pose,
-                            "left_pose": self.robot.left_init_ee_pose,
-                        },
-                    )
-                )
+            init_pose = self.robot.right_init_ee_pose
         else:
             now_arm = "left"
-            if now_arm == last_arm or last_arm is None:
-                if now_arm == last_arm:
-                    pose0 = list(
-                        self.robot.left_ee_link.get_entity_pose().p + [0, 0, 0.05]
-                    ) + list(self.robot.left_ee_link.get_entity_pose().q)
-                    substeps.append(("move_to_pose", {"left_pose": pose0}))
+            init_pose = self.robot.left_init_ee_pose
+
+        # 如果上一个手臂存在且与当前手臂不同，先将上一个手臂收回初始位置
+        if last_arm is not None and last_arm != now_arm:
+            if last_arm == "right":
                 substeps.append(
-                    (
-                        "move_to_pose",
-                        {"left_pose": deepcopy(pre_grasp_pose)},
-                    )
+                    ("move_to_pose", {"right_pose": self.robot.right_init_ee_pose})
                 )
             else:
                 substeps.append(
-                    (
-                        "move_to_pose",
-                        {
-                            "left_pose": pre_grasp_pose,
-                            "right_pose": self.robot.right_init_ee_pose,
-                        },
-                    )
+                    ("move_to_pose", {"left_pose": self.robot.left_init_ee_pose})
                 )
 
+        # 从初始位置移动到预抓取位置
+        substeps.append(("move_to_pose", {f"{now_arm}_pose": deepcopy(pre_grasp_pose)}))
+
+        # 打开夹爪
         substeps.append(("open_gripper", {"action_mode": now_arm}))
+
+        # 下降到抓取位置
         pre_grasp_pose[2] -= 0.15
-        substeps.append(
-            (
-                "move_to_pose",
-                {f"{now_arm}_pose": deepcopy(pre_grasp_pose)},
-            )
-        )
+        substeps.append(("move_to_pose", {f"{now_arm}_pose": deepcopy(pre_grasp_pose)}))
+
+        # 关闭夹爪
         substeps.append(("close_gripper", {"action_mode": now_arm}))
+
+        # 抬起物体
         pre_grasp_pose[2] += 0.15
-        substeps.append(
-            (
-                "move_to_pose",
-                {f"{now_arm}_pose": deepcopy(pre_grasp_pose)},
-            )
-        )
+        substeps.append(("move_to_pose", {f"{now_arm}_pose": deepcopy(pre_grasp_pose)}))
+
+        # 移动到目标位置上方
         substeps.append(("move_to_pose", {f"{now_arm}_pose": deepcopy(target_pose)}))
+
+        # 下降到放置位置
         target_pose[2] -= 0.05
         substeps.append(("move_to_pose", {f"{now_arm}_pose": deepcopy(target_pose)}))
+
+        # 打开夹爪
         substeps.append(("open_gripper", {"action_mode": now_arm}))
+
+        # 抬起
         target_pose[2] += 0.1
         substeps.append(("move_to_pose", {f"{now_arm}_pose": deepcopy(target_pose)}))
+
+        # 收回到初始位置
+        substeps.append(("move_to_pose", {f"{now_arm}_pose": init_pose}))
 
         return substeps, now_arm
 

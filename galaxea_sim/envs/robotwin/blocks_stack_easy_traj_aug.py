@@ -13,7 +13,7 @@ import os
 
 # 定义可选的抓取角度
 # GRASP_ANGLES = [0, math.pi / 6, math.pi / 4, math.pi / 3]
-GRASP_ANGLES = [math.pi / 6, math.pi / 4, math.pi / 3]
+GRASP_ANGLES = [math.pi / 4]
 # 定义每个抓取角度对应的偏移量 (x, y, z)
 GRASP_OFFSETS = {
     math.pi / 6: [-0.045, 0, 0.025],  # 30度抓取
@@ -29,9 +29,10 @@ class BlocksStackEasyTrajAugEnv(RoboTwinBaseEnv):
     def __init__(
         self,
         *args,
-        enable_retry=True,
-        enable_traj_augmented=True,
+        enable_retry=False,
+        enable_traj_augmented=False,
         enable_visual=True,
+        enable_grasp_sample=False,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
@@ -39,6 +40,7 @@ class BlocksStackEasyTrajAugEnv(RoboTwinBaseEnv):
         self.enable_retry = enable_retry  # 控制是否启用retry逻辑
         self.enable_visual = enable_visual  # 控制是否启用可视化
         self.enable_traj_augmented = enable_traj_augmented  # 控制是否启用轨迹增强
+        self.enable_grasp_sample = enable_grasp_sample  # 控制是否启用抓取角度采样
 
         # 创建可视化标记来显示目标位置
         self._setup_visual_markers()
@@ -46,7 +48,7 @@ class BlocksStackEasyTrajAugEnv(RoboTwinBaseEnv):
     def _rand_pose(self):
         return rand_pose(
             xlim=[-0.12, -0.01],
-            ylim=[-0.20, 0.20],
+            ylim=[-0.25, 0.25],
             zlim=[self.block_half_size],
             qpos=[1, 0, 0, 0],
             rotate_rand=True,
@@ -195,11 +197,11 @@ class BlocksStackEasyTrajAugEnv(RoboTwinBaseEnv):
 
         # 返回第一个未尝试的候选角度
         selected = candidate_angles[0]
-        print(
-            f"Selected grasp angle: {math.degrees(selected):.1f}° from available candidates: "
-            f"{[f'{math.degrees(a):.1f}°' for a in candidate_angles]} "
-            f"(already tried: {[f'{math.degrees(a):.1f}°' for a in tried_angles] if tried_angles else 'none'})"
-        )
+        # print(
+        #     f"Selected grasp angle: {math.degrees(selected):.1f}° from available candidates: "
+        #     f"{[f'{math.degrees(a):.1f}°' for a in candidate_angles]} "
+        #     f"(already tried: {[f'{math.degrees(a):.1f}°' for a in tried_angles] if tried_angles else 'none'})"
+        # )
         return selected
 
     def move_block(self, actor: sapien.Entity, id, last_arm=None, tried_angles=None):
@@ -217,17 +219,22 @@ class BlocksStackEasyTrajAugEnv(RoboTwinBaseEnv):
         actor_rpy = actor.get_pose().get_rpy()
         actor_pos = actor.get_pose().p
 
-        # 选择一个候选抓取角度（会自动排除已尝试过的角度）
-        actor_euler = self.select_grasp_angle(actor_rpy, tried_angles)
+        if self.enable_grasp_sample:
+            # 使用复杂的抓取角度采样逻辑
+            # 选择一个候选抓取角度（会自动排除已尝试过的角度）
+            actor_euler = self.select_grasp_angle(actor_rpy, tried_angles)
 
-        # 如果所有角度都尝试过了，使用第一个作为后备
-        if actor_euler is None:
+            # 如果所有角度都尝试过了，使用第一个作为后备
+            if actor_euler is None:
+                base_euler = actor_rpy[2]
+                actor_euler = math.fmod(base_euler, math.pi / 2)
+
+            # 保存当前尝试的角度
+            self.last_tried_angle = actor_euler
+        else:
+            # 简单模式：只使用基础角度计算
             base_euler = actor_rpy[2]
             actor_euler = math.fmod(base_euler, math.pi / 2)
-            print("Using fallback angle as all angles have been exhausted")
-
-        # 保存当前尝试的角度
-        self.last_tried_angle = actor_euler
 
         if actor_pos[1] < 0:
             # closer to right arm
@@ -433,14 +440,37 @@ class BlocksStackEasyTrajAugEnv(RoboTwinBaseEnv):
             # 记录本次尝试的角度
             if hasattr(self, "last_tried_angle"):
                 tried_angles.append(self.last_tried_angle)
-                print(
-                    f"Retry {retry_count}: Tried angles so far: {[f'{math.degrees(a):.1f}°' for a in tried_angles]}"
-                )
+                # print(
+                #     f"Retry {retry_count}: Tried angles so far: {[f'{math.degrees(a):.1f}°' for a in tried_angles]}"
+                # )
 
             # 执行抓取前的步骤
             for i, (action_name, action_params) in enumerate(substeps):
                 if action_name == "close_gripper":
-                    # 关闭夹爪
+                    # 在闭合夹爪之前，先检查物体是否在夹爪范围内
+                    in_grasp_range = self.check_grasp_position(actor, now_arm)
+
+                    if not in_grasp_range:
+                        # 物体不在夹爪范围内，不闭合夹爪，直接进入重试逻辑
+                        # print(
+                        #     f"Object not in grasp range, skipping close_gripper. Retry {retry_count}/{max_retries}"
+                        # )
+                        if retry_count < max_retries:
+                            # 移动到安全位置，准备重试
+                            safe_pose = list(actor.get_pose().p + [0, 0, 0.2]) + list(
+                                self.robot.left_ee_link.get_entity_pose().q
+                                if now_arm == "left"
+                                else self.robot.right_ee_link.get_entity_pose().q
+                            )
+                            yield ("move_to_pose", {f"{now_arm}_pose": safe_pose})
+                            retry_count += 1
+                            break  # 跳出当前循环，开始下一次重试
+                        else:
+                            # 没有重试机会了，直接返回失败
+                            # print("Max retries reached, grasp failed")
+                            return now_arm
+
+                    # 物体在夹爪范围内，执行闭合夹爪
                     yield (action_name, action_params)
 
                     # 找到下一个抬起动作（需要检查两种可能的动作名称）
@@ -462,12 +492,16 @@ class BlocksStackEasyTrajAugEnv(RoboTwinBaseEnv):
 
                         if is_grasped:
                             # 抓取成功，继续执行后续步骤
+                            # print("Grasp successful!")
                             for remaining_step in substeps[lift_step_index + 1 :]:
                                 yield remaining_step
                             self.current_arm = now_arm  # 更新当前使用的机械臂
                             return now_arm  # 成功完成，返回使用的机械臂
                         else:
                             # 抓取失败，如果还有重试机会，则重新开始
+                            # print(
+                            #     f"Grasp failed after closing gripper. Retry {retry_count}/{max_retries}"
+                            # )
                             if retry_count < max_retries:
                                 # 打开夹爪，准备重试
                                 yield ("open_gripper", {"action_mode": now_arm})
@@ -484,18 +518,23 @@ class BlocksStackEasyTrajAugEnv(RoboTwinBaseEnv):
                                 break  # 跳出当前循环，开始下一次重试
                             else:
                                 # 没有重试机会了，直接返回失败
+                                # print("Max retries reached, grasp failed")
                                 return now_arm
                     else:
                         # 没有找到抬起动作，直接检测
                         is_grasped = self.evaluate_grasp(actor, now_arm)
                         if is_grasped:
                             # 抓取成功，继续执行后续步骤
+                            # print("Grasp successful!")
                             for remaining_step in substeps[i + 1 :]:
                                 yield remaining_step
                             self.current_arm = now_arm  # 更新当前使用的机械臂
                             return now_arm
                         else:
                             # 抓取失败，如果还有重试机会，则重新开始
+                            # print(
+                            #     f"Grasp failed after closing gripper. Retry {retry_count}/{max_retries}"
+                            # )
                             if retry_count < max_retries:
                                 # 打开夹爪，准备重试
                                 yield ("open_gripper", {"action_mode": now_arm})
@@ -512,6 +551,7 @@ class BlocksStackEasyTrajAugEnv(RoboTwinBaseEnv):
                                 break  # 跳出当前循环，开始下一次重试
                             else:
                                 # 没有重试机会了，直接返回失败
+                                print("Max retries reached, grasp failed")
                                 return now_arm
                 else:
                     yield (action_name, action_params)
@@ -575,6 +615,49 @@ class BlocksStackEasyTrajAugEnv(RoboTwinBaseEnv):
                 "offset": GRASP_OFFSETS.get(self.grasp_angle, [-0.05, 0, 0.02]),
             }
         return None
+
+    def check_grasp_position(self, actor, arm):
+        """检查物体是否在夹爪范围内（闭合夹爪前的检查）
+
+        Args:
+            actor: 要检测的物体
+            arm: 使用的机械臂 ("left" 或 "right")
+
+        Returns:
+            bool: 如果物体在夹爪范围内返回True，否则返回False
+        """
+        # 获取物体位置
+        object_pos = actor.get_pose().p
+
+        # 获取对应机械臂的末端执行器位置
+        if arm == "left":
+            ee_pos = self.robot.left_ee_link.get_entity_pose().p
+        else:
+            ee_pos = self.robot.right_ee_link.get_entity_pose().p
+
+        # 由于使用了 tf_to_grasp 偏移（x: -0.035~-0.045m, z: 0.01~0.025m）
+        # 末端执行器中心会故意偏离物体位置，所以需要更宽松的阈值
+        # 检查物体是否在机械臂附近（水平距离小于8cm，考虑偏移量）
+        horizontal_distance = np.linalg.norm(object_pos[:2] - ee_pos[:2])
+        is_near_arm = horizontal_distance < 0.08
+
+        # 检查物体是否在夹爪高度范围内（z轴距离小于8cm，考虑偏移量）
+        vertical_distance = abs(object_pos[2] - ee_pos[2])
+        is_at_grasp_height = vertical_distance < 0.08
+
+        # 综合判断：物体在机械臂附近且在合适的高度
+        in_grasp_range = is_near_arm and is_at_grasp_height
+
+        # if not in_grasp_range:
+        #     print(
+        #         f"Object NOT in grasp range - horizontal_dist: {horizontal_distance:.4f}m, vertical_dist: {vertical_distance:.4f}m"
+        #     )
+        # else:
+        #     print(
+        #         f"Object in grasp range - horizontal_dist: {horizontal_distance:.4f}m, vertical_dist: {vertical_distance:.4f}m"
+        #     )
+
+        return in_grasp_range
 
     def evaluate_grasp(self, actor, arm):
         """评估物体是否被成功抓取
