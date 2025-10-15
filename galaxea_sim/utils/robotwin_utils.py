@@ -460,6 +460,7 @@ def get_grasp_pose_w_labeled_direction(
     )
     global_grasp_pose_q = t3d.quaternions.mat2quat(global_contact_pose_matrix_q)
     res_pose = list(global_grasp_pose_p) + list(global_grasp_pose_q)
+    print(f"Grasp pose: {res_pose}")
     return np.array(res_pose)
 
 
