@@ -20,14 +20,14 @@ import time
 def evaluate(
     task: str,
     pretrained_policy_path: str = "/home/sen/workspace/galaxea/GalaxeaManipSim/outputs/ACT/R1ProBlocksStackEasy-traj_aug/all-20251010214500/checkpoints/last/pretrained_model",
-    dataset_repo_id: str = "galaxea/R1ProBlocksStackEasy-traj_aug/all",
+    dataset_repo_id: str = "galaxea/R1ProBlocksStackEasy/normal",
     target_controller_type: str = "bimanual_relaxed_ik",
     device: str = "cuda",
     headless: bool = True,
     num_evaluations: int = 100,
     temporal_ensemble: bool = True,  # ACT 特有的时序集成
     save_video: bool = True,
-    seed: int = 20251015,  # 添加seed参数
+    seed: int = 40,  # 添加seed参数
 ):
     """在模拟环境中多次评估预训练的 ACT 策略。"""
     # 设置全局随机种子以确保可复现性
@@ -61,7 +61,7 @@ def evaluate(
         from lerobot.policies.act.modeling_act import ACTTemporalEnsembler
 
         policy.config.temporal_ensemble_coeff = 0.1
-        policy.config.n_action_steps = 1
+        policy.config.n_action_steps = 30
         policy.temporal_ensembler = ACTTemporalEnsembler(
             temporal_ensemble_coeff=0.1, chunk_size=policy.config.chunk_size
         )
@@ -71,7 +71,7 @@ def evaluate(
         task,
         control_freq=15,  # 必须与训练数据的 fps 匹配！
         headless=headless,
-        max_episode_steps=1000,
+        max_episode_steps=500,
         controller_type=target_controller_type,
     )
 

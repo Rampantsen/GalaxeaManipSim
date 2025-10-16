@@ -21,7 +21,9 @@ def main(
     use_video: bool = False,
     push_to_hub: bool = False,
     output_dir: str = "outputs",  # 新增参数
-    feature: Literal["no-retry", "traj_augmented_only", "normal", "all"] = "all",
+    feature: Literal[
+        "no-retry", "traj_augmented_only", "normal", "grasp_sample_only", "all"
+    ] = "all",
 ):
     output_path = HF_LEROBOT_HOME / REPO_PREFIX / task / feature
     if output_path.exists():

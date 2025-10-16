@@ -46,7 +46,7 @@ def evaluate(
         task,
         control_freq=15,
         headless=headless,
-        max_episode_steps=800,
+        max_episode_steps=500,
         controller_type=target_controller_type,
     )
     for eval_idx in range(num_evaluations):
