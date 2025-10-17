@@ -24,10 +24,10 @@ def evaluate(
     target_controller_type: str = "bimanual_relaxed_ik",
     device: str = "cuda",
     headless: bool = True,
-    num_evaluations: int = 100,
+    num_evaluations: int = 200,
     temporal_ensemble: bool = True,  # ACT 特有的时序集成
     save_video: bool = True,
-    seed: int = 40,  # 添加seed参数
+    seed: int = 42,  # 添加seed参数
 ):
     """在模拟环境中多次评估预训练的 ACT 策略。"""
     # 设置全局随机种子以确保可复现性
@@ -71,7 +71,7 @@ def evaluate(
         task,
         control_freq=15,  # 必须与训练数据的 fps 匹配！
         headless=headless,
-        max_episode_steps=500,
+        max_episode_steps=600,
         controller_type=target_controller_type,
     )
 
