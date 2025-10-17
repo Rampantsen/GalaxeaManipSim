@@ -4,7 +4,6 @@ import random
 
 import sapien
 import numpy as np
-import transforms3d
 
 from galaxea_sim.utils.robotwin_utils import create_box, create_visual_ee_link
 from galaxea_sim.utils.rand_utils import rand_pose
@@ -47,8 +46,8 @@ class BlocksStackEasyTrajAugEnv(RoboTwinBaseEnv):
 
     def _rand_pose(self):
         return rand_pose(
-            xlim=[-0.12, -0.01],
-            ylim=[0.3, 0.5],
+            xlim=[-0.12, -0.02],
+            ylim=[-0.5, 0.5],
             zlim=[self.block_half_size],
             qpos=[1, 0, 0, 0],
             rotate_rand=True,

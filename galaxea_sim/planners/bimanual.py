@@ -29,21 +29,18 @@ class BimanualPlanner(BasePlanner):
         right_arm_move_group,
         active_joint_names,
         control_freq,
-        robot_test,
         env,
     ):
         self.left_arm_planner = mplib.planner.Planner(
             urdf=ASSETS_DIR / urdf_path,
             srdf=ASSETS_DIR / srdf_path if srdf_path else None,
             move_group=left_arm_move_group,
-            robot_test=robot_test,
             env=env,
         )
         self.right_arm_planner = mplib.planner.Planner(
             urdf=ASSETS_DIR / urdf_path,
             srdf=ASSETS_DIR / srdf_path if srdf_path else None,
             move_group=right_arm_move_group,
-            robot_test=robot_test,
             env=env,
         )
         # ---------- 全身 Pinocchio FK 初始化 ----------
