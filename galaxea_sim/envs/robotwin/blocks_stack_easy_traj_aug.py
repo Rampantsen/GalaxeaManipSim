@@ -31,7 +31,7 @@ class BlocksStackEasyTrajAugEnv(RoboTwinBaseEnv):
         enable_retry=False,
         enable_traj_augmented=False,
         enable_visual=True,
-        enable_grasp_sample=True,
+        enable_grasp_sample=False,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)

@@ -7,6 +7,7 @@ import torch
 import tyro
 import cv2
 import random
+from tqdm import tqdm
 
 from lerobot.policies.act.modeling_act import ACTPolicy
 from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata
@@ -24,12 +25,13 @@ def evaluate(
     target_controller_type: str = "bimanual_relaxed_ik",
     device: str = "cuda",
     headless: bool = True,
-    num_evaluations: int = 200,
+    num_evaluations: int = 100,
     temporal_ensemble: bool = True,  # ACT 特有的时序集成
-    save_video: bool = True,
-    seed: int = 42,  # 添加seed参数
+    save_video: bool = False,
+    seed: int = 10,  # 添加seed参数
 ):
-    """在模拟环境中多次评估预训练的 ACT 策略。"""
+    """在模拟环
+    境中多次评估预训练的 ACT 策略。"""
     # 设置全局随机种子以确保可复现性
     random.seed(seed)
     np.random.seed(seed)
@@ -38,7 +40,7 @@ def evaluate(
         torch.cuda.manual_seed_all(seed)
 
     output_directory = (
-        Path(pretrained_policy_path).parent.parent
+        Path(pretrained_policy_path).parent
         / "evaluations"
         / time.strftime("%Y%m%d_%H%M%S")
     )
@@ -67,19 +69,40 @@ def evaluate(
         )
 
     infos = []
+    infos.append(
+        dict(
+            task=task,
+            target_controller_type=target_controller_type,
+            temporal_ensemble=temporal_ensemble,
+            seed=seed,
+            num_evaluations=num_evaluations,
+            pretrained_policy_path=pretrained_policy_path,
+        )
+    )
     env = gym.make(
         task,
         control_freq=15,  # 必须与训练数据的 fps 匹配！
         headless=headless,
-        max_episode_steps=600,
+        max_episode_steps=1000,
         controller_type=target_controller_type,
     )
 
-    for eval_idx in range(num_evaluations):
-        print(f"开始评估 {eval_idx + 1}/{num_evaluations}")
-
+    success_count_running = 0
+    for eval_idx in tqdm(range(num_evaluations), desc="评估进度", unit="episode"):
         policy.reset()
-        numpy_observation, info = env.reset(seed=seed + eval_idx)
+        numpy_observation, reset_info = env.reset()
+
+        # 保存初始方块位姿信息
+        initial_block_poses = {}
+        if "block1_pose" in reset_info:
+            initial_block_poses["block1_initial_pose"] = reset_info[
+                "block1_pose"
+            ].tolist()
+        if "block2_pose" in reset_info:
+            initial_block_poses["block2_initial_pose"] = reset_info[
+                "block2_pose"
+            ].tolist()
+
         if save_video:
             env.render()
 
@@ -159,9 +182,22 @@ def evaluate(
             done = terminated or truncated or done
             step += 1
 
-        print("成功!" if terminated else "失败!")
-        print(f"总步数: {step}, 总奖励: {sum(rewards):.2f}")
+        # 将seed、eval_idx、方块初始位姿和其他统计信息添加到info中
+        info["eval_idx"] = eval_idx
+        info["total_steps"] = step
+        # 添加初始方块位姿信息
+        info.update(initial_block_poses)
+
         infos.append(info)
+
+        # 更新实时成功率
+        if info.get("success", False):
+            success_count_running += 1
+        current_success_rate = success_count_running / (eval_idx + 1) * 100
+        tqdm.write(
+            f"Episode {eval_idx + 1}: {'✓ 成功' if terminated else '✗ 失败'} | 步数: {step} | 当前成功率: {current_success_rate:.1f}%"
+        )
+
         save_dict_list_to_json(infos, output_directory / "info.json")
 
         if save_video:
@@ -173,10 +209,21 @@ def evaluate(
     # 计算并打印统计信息
     success_count = sum(1 for info in infos if info.get("success", False))
     success_rate = success_count / num_evaluations
-    print(f"\n评估完成:")
+    infos.insert(
+        1,  # 插入到索引1的位置（配置信息之后，episode信息之前）
+        dict(
+            success_count=success_count,
+            success_rate=success_rate,
+        ),
+    )
+    save_dict_list_to_json(infos, output_directory / "info.json")
+    print(f"\n{'='*50}")
+    print(f"评估完成!")
+    print(f"{'='*50}")
     print(f"总评估次数: {num_evaluations}")
     print(f"成功次数: {success_count}")
     print(f"成功率: {success_rate * 100:.2f}%")
+    print(f"{'='*50}")
 
 
 if __name__ == "__main__":

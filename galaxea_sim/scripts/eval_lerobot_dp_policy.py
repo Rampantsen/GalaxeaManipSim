@@ -6,6 +6,7 @@ import pickle
 import torch
 import tyro
 import cv2
+import random
 
 from lerobot.policies.diffusion.modeling_diffusion import DiffusionPolicy
 from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata
@@ -25,8 +26,15 @@ def evaluate(
     num_evaluations: int = 100,
     num_action_steps: int = 16,
     save_video: bool = False,
+    seed: int = 42,  # 添加seed参数
 ):
     """Evaluate a pretrained policy in a simulated environment multiple times."""
+    # 设置全局随机种子以确保可复现性
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
     output_directory = (
         Path(pretrained_policy_path)
         / "evaluations"
@@ -53,7 +61,20 @@ def evaluate(
         print(f"Starting evaluation {eval_idx + 1}/{num_evaluations}")
 
         policy.reset()
-        numpy_observation, info = env.reset(seed=42)
+        episode_seed = seed + eval_idx  # 保存当前episode的seed
+        numpy_observation, reset_info = env.reset(seed=episode_seed)
+
+        # 保存初始方块位姿信息
+        initial_block_poses = {}
+        if "block1_pose" in reset_info:
+            initial_block_poses["block1_initial_pose"] = reset_info[
+                "block1_pose"
+            ].tolist()
+        if "block2_pose" in reset_info:
+            initial_block_poses["block2_initial_pose"] = reset_info[
+                "block2_pose"
+            ].tolist()
+
         if save_video:
             env.render()
 
@@ -129,6 +150,17 @@ def evaluate(
             step += 1
 
         print("Success!" if terminated else "Failure!")
+        print(f"Total steps: {step}, Total reward: {sum(rewards):.2f}")
+
+        # 将seed、eval_idx、方块初始位姿和其他统计信息添加到info中
+        info["seed"] = episode_seed
+        info["eval_idx"] = eval_idx
+        info["total_steps"] = step
+        info["total_reward"] = sum(rewards)
+
+        # 添加初始方块位姿信息
+        info.update(initial_block_poses)
+
         infos.append(info)
         save_dict_list_to_json(infos, output_directory / "info.json")
         if save_video:

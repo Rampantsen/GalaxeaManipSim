@@ -7,8 +7,9 @@ import gymnasium as gym
 import tyro
 from loguru import logger
 from pathlib import Path
+import random
+import numpy as np
 
-import galaxea_sim.envs
 from galaxea_sim.envs.base.bimanual_manipulation import BimanualManipulationEnv
 from galaxea_sim.planners.bimanual import BimanualPlanner
 from galaxea_sim.utils.data_utils import save_dict_list_to_hdf5, save_dict_list_to_json
@@ -32,8 +33,14 @@ def main(
     ] = "all",
     tag: Literal["collected"] = "collected",
     ray_tracing: bool = False,
-    retry: bool = False,
+    seed: Optional[int] = None,  # 添加seed参数
 ):
+    # 设置全局随机种子以确保可复现性
+    if seed is not None:
+        random.seed(seed)
+        np.random.seed(seed)
+        logger.info(f"设置随机种子: {seed}")
+
     env = gym.make(
         env_name,
         control_freq=control_freq,
@@ -49,7 +56,6 @@ def main(
         right_arm_move_group=env.unwrapped.right_ee_link_name,
         active_joint_names=env.unwrapped.active_joint_names,
         control_freq=env.unwrapped.control_freq,
-        robot_test=env.unwrapped.robot.robot,
         env=env,
     )
 
@@ -57,7 +63,18 @@ def main(
     num_collected = 0
     num_tries = 0
     meta_info_list = []
+    # 记录收集参数
+    meta_info_list.append(
+        dict(
+            env_name=env_name,
+            feature=feature,
+            seed=seed,
+            num_demos=num_demos,
+        )
+    )
+
     while num_collected < num_demos:
+
         num_steps = 0
         traj = []
         info = {}
