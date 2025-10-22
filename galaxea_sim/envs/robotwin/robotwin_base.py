@@ -50,7 +50,7 @@ class RoboTwinBaseEnv(BimanualManipulationEnv):
         if self.robot_name == "r1_lite":
             return 0.7
         else:
-            return 0.9
+            return 0.76
         
     @property
     def tabletop_center_x(self):

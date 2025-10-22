@@ -184,7 +184,7 @@ class BimanualPlanner(BasePlanner):
 
         This function:
         1. Plans initial trajectory from start to goal
-        2. Randomly selects 1-3 waypoints along the trajectory
+        2. Randomly selects 4-8 waypoints along the trajectory
         3. Adds noise to joint positions at these waypoints
         4. Re-plans through the noisy waypoints to create augmented trajectory
 
