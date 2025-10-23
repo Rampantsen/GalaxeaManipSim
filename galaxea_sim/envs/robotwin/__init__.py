@@ -143,7 +143,6 @@ gym.register(
         robot_class=R1Robot,
         robot_kwargs=dict(init_qpos=R1_INIT_QPOS),
         headless=False,
-        ray_tracing=False,
     ),
     max_episode_steps=350,
 )
@@ -157,7 +156,6 @@ gym.register(
         robot_class=R1ProRobot,
         robot_kwargs=dict(init_qpos=R1PRO_INIT_QPOS),
         headless=False,
-        ray_tracing=False,
     ),
     max_episode_steps=350,
 )
@@ -170,7 +168,6 @@ gym.register(
         robot_class=R1ProRobot,
         robot_kwargs=dict(init_qpos=R1PRO_INIT_QPOS),
         headless=False,
-        ray_tracing=False,
     ),
     max_episode_steps=350,
 )

@@ -26,7 +26,7 @@ def main(
         "traj_augmented_only",
         "grasp_sample_only",
         "retry_only",
-        "normal",
+        "baseline",
         "all",
     ] = "all",
     table_type: Literal["red", "white"] = "red",

@@ -11,13 +11,13 @@ from .robotwin_base import RoboTwinBaseEnv
 import os
 
 # 定义可选的抓取角度
-# GRASP_ANGLES = [0, math.pi / 6, math.pi / 4, math.pi / 3]
-GRASP_ANGLES = [math.pi / 6, math.pi / 4, math.pi / 3]
+# GRASP_ANGLES = [0, math.pi / 6, math.pi / 4, math.pi / 5]
+GRASP_ANGLES = [math.pi / 6, math.pi / 4, math.pi / 5]
 # 定义每个抓取角度对应的偏移量 (x, y, z)
 GRASP_OFFSETS = {
-    math.pi / 6: [-0.045, 0, 0.025],  # 30度抓取
-    math.pi / 4: [-0.045, 0, 0.02],  # 45度抓取
-    math.pi / 3: [-0.035, 0, 0.01],  # 60度抓取
+    math.pi / 6: [-0.055, 0, 0.025],  # 30度抓取
+    math.pi / 4: [-0.05, 0, 0.02],  # 45度抓取
+    math.pi / 5: [-0.052, 0, 0.023],  
 }
 
 
@@ -49,7 +49,7 @@ class BlocksStackEasyTrajAugEnv(RoboTwinBaseEnv):
     def _rand_pose(self):
         return rand_pose(
             xlim=[-0.12, -0.02],
-            ylim=[-0.5, 0.5],
+            ylim=[-0.45, 0.45],
             zlim=[self.block_half_size],
             qpos=[1, 0, 0, 0],
             rotate_rand=True,

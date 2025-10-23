@@ -29,11 +29,11 @@ def main(
         "traj_augmented_only",
         "grasp_sample_only",
         "retry_only",
-        "normal",
+        "baseline",
         "all",
     ] = "all",
     tag: Literal["collected"] = "collected",
-    ray_tracing: bool = False,
+    ray_tracing: bool = True,
     seed: Optional[int] = None,  # 添加seed参数
 ):
     # 设置全局随机种子以确保可复现性
