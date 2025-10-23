@@ -235,12 +235,110 @@ def create_table(
     color: tuple = (1, 1, 1),
     name: str = "table",
     is_static: bool = True,
+    texture_path: str = None,
+    roughness_path: str = None,
+    normal_path: str = None,
+    metallic_path: str = None,
+    brightness: float = 1,
 ) -> sapien.Entity:
-    """Create a table with specified dimensions."""
+    """Create a table with specified dimensions.
+    
+    Args:
+        scene: Sapien scene
+        pose: Table pose
+        length: Table length
+        width: Table width  
+        height: Table height
+        thickness: Table thickness
+        color: Base color tuple (r, g, b)
+        name: Table name
+        is_static: Whether table is static
+        texture_path: Path to base color texture file (optional)
+        roughness_path: Path to roughness texture file (optional)
+        normal_path: Path to normal map texture file (optional)
+        metallic_path: Path to metallic texture file (optional)
+        brightness: Brightness multiplier (1.0=normal, >1.0=brighter, 1.5-2.0 recommended)
+    """
 
     builder = scene.create_actor_builder()
     body_type = "static" if is_static else "dynamic"
     builder.set_physx_body_type(body_type)
+
+    # Create material
+    if texture_path:
+        # Load texture and create material with PBR textures
+        try:
+            # 计算亮度调整后的发光色
+            emission_intensity = (brightness - 1.0) * 0.3  # 将额外亮度转换为发光强度
+            emission_color = [emission_intensity, emission_intensity, emission_intensity, 1.0]
+            
+            # Create material with basic properties
+            material = sapien.render.RenderMaterial(
+                base_color=[color[0] * brightness, color[1] * brightness, color[2] * brightness, 1],
+                metallic=0.0,
+                roughness=0.8,
+                emission=emission_color  # 添加发光属性使材质更亮
+            )
+            
+            # Load and set base color texture
+            base_color_texture = sapien.render.RenderTexture2D(
+                filename=texture_path,
+                mipmap_levels=1,
+                filter_mode='linear',
+                address_mode='repeat',
+                srgb=True  # Color textures should use sRGB
+            )
+            material.base_color_texture = base_color_texture
+            
+            # Load and set roughness texture if provided
+            if roughness_path:
+                try:
+                    roughness_texture = sapien.render.RenderTexture2D(
+                        filename=roughness_path,
+                        mipmap_levels=1,
+                        filter_mode='linear',
+                        address_mode='repeat',
+                        srgb=False  # Non-color textures should NOT use sRGB
+                    )
+                    material.roughness_texture = roughness_texture
+                except Exception as e:
+                    print(f"Warning: Failed to load roughness texture: {e}")
+            
+            # Load and set normal texture if provided
+            if normal_path:
+                try:
+                    normal_texture = sapien.render.RenderTexture2D(
+                        filename=normal_path,
+                        mipmap_levels=1,
+                        filter_mode='linear',
+                        address_mode='repeat',
+                        srgb=False  # Non-color textures should NOT use sRGB
+                    )
+                    material.normal_texture = normal_texture
+                except Exception as e:
+                    print(f"Warning: Failed to load normal texture: {e}")
+            
+            # Load and set metallic texture if provided
+            if metallic_path:
+                try:
+                    metallic_texture = sapien.render.RenderTexture2D(
+                        filename=metallic_path,
+                        mipmap_levels=1,
+                        filter_mode='linear',
+                        address_mode='repeat',
+                        srgb=False  # Non-color textures should NOT use sRGB
+                    )
+                    material.metallic_texture = metallic_texture
+                except Exception as e:
+                    print(f"Warning: Failed to load metallic texture: {e}")
+                    
+        except Exception as e:
+            print(f"Warning: Failed to load texture from {texture_path}: {e}")
+            print("Using default color material instead.")
+            material = sapien.render.RenderMaterial(base_color=[*color[:3], 1])
+    else:
+        # Use default color material
+        material = sapien.render.RenderMaterial(base_color=[*color[:3], 1])
 
     # Create tabletop
     tabletop_pose = sapien.Pose([0.0, 0.0, -thickness / 2])
@@ -251,7 +349,7 @@ def create_table(
         material=scene.create_physical_material(0.8, 0.8, 0.6),
     )
     builder.add_box_visual(
-        pose=tabletop_pose, half_size=tabletop_half_size, material=color
+        pose=tabletop_pose, half_size=tabletop_half_size, material=material
     )
 
     # Create table legs
@@ -264,7 +362,7 @@ def create_table(
             leg_pose = sapien.Pose([x, y, -height / 2])
             builder.add_box_collision(pose=leg_pose, half_size=leg_half_size)
             builder.add_box_visual(
-                pose=leg_pose, half_size=leg_half_size, material=color
+                pose=leg_pose, half_size=leg_half_size, material=material
             )
 
     table = builder.build(name=name)

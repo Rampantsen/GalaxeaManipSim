@@ -30,19 +30,21 @@ class BlocksStackEasyTrajAugEnv(RoboTwinBaseEnv):
         *args,
         enable_retry=False,
         enable_traj_augmented=False,
-        enable_visual=True,
-        enable_grasp_sample=False,
+        enable_visual=False,
+        enable_grasp_sample=True,
+        table_type="white", # "redwood" or "whitewood"
         **kwargs,
     ):
-        super().__init__(*args, **kwargs)
+        # 将 table_type 传递给父类
+        super().__init__(*args, table_type=table_type, **kwargs)
         self.current_arm = None  # 跟踪当前使用的机械臂
         self.enable_retry = enable_retry  # 控制是否启用retry逻辑
         self.enable_visual = enable_visual  # 控制是否启用可视化
         self.enable_traj_augmented = enable_traj_augmented  # 控制是否启用轨迹增强
         self.enable_grasp_sample = enable_grasp_sample  # 控制是否启用抓取角度采样
-
-        # 创建可视化标记来显示目标位置
-        self._setup_visual_markers()
+        # 创建可视化标记来显示目标位置（仅当enable_visual=True时）
+        if self.enable_visual:
+            self._setup_visual_markers()
 
     def _rand_pose(self):
         return rand_pose(
@@ -73,7 +75,7 @@ class BlocksStackEasyTrajAugEnv(RoboTwinBaseEnv):
                 self.block_half_size,
                 self.block_half_size,
             ),
-            color=(1, 0, 0),
+            color=(250/255, 0, 10/255),
             name="box",
         )
 
@@ -99,7 +101,7 @@ class BlocksStackEasyTrajAugEnv(RoboTwinBaseEnv):
                 self.block_half_size,
                 self.block_half_size,
             ),
-            color=(0, 1, 0),
+            color=(0, 200/255, 30/255),
             name="box",
         )
 
@@ -311,22 +313,23 @@ class BlocksStackEasyTrajAugEnv(RoboTwinBaseEnv):
         pre_grasp_pose = self.tf_to_grasp(pre_grasp_pose, self.grasp_angle)
 
         # 更新可视化标记：显示预抓取位置（蓝色半透明夹爪）
-        pre_grasp_sapien_pose = sapien.Pose(p=pre_grasp_pose[:3], q=pre_grasp_pose[3:7])
-        self._update_visual_gripper_pose(
-            self.pre_grasp_marker_entities, pre_grasp_sapien_pose
-        )
+        if self.enable_visual:
+            pre_grasp_sapien_pose = sapien.Pose(p=pre_grasp_pose[:3], q=pre_grasp_pose[3:7])
+            self._update_visual_gripper_pose(
+                self.pre_grasp_marker_entities, pre_grasp_sapien_pose
+            )
 
-        # 计算并显示抓取位置（青色半透明夹爪）- 预抓取位置下降0.15m
-        grasp_pose_vis = pre_grasp_pose.copy()
-        grasp_pose_vis[2] -= 0.15
-        grasp_sapien_pose = sapien.Pose(p=grasp_pose_vis[:3], q=grasp_pose_vis[3:7])
-        self._update_visual_gripper_pose(self.grasp_marker_entities, grasp_sapien_pose)
+            # 计算并显示抓取位置（青色半透明夹爪）- 预抓取位置下降0.15m
+            grasp_pose_vis = pre_grasp_pose.copy()
+            grasp_pose_vis[2] -= 0.15
+            grasp_sapien_pose = sapien.Pose(p=grasp_pose_vis[:3], q=grasp_pose_vis[3:7])
+            self._update_visual_gripper_pose(self.grasp_marker_entities, grasp_sapien_pose)
 
-        # 更新目标放置位置标记（黄色半透明夹爪）
-        target_sapien_pose = sapien.Pose(p=target_pose[:3], q=target_pose[3:7])
-        self._update_visual_gripper_pose(
-            self.target_place_marker_entities, target_sapien_pose
-        )
+            # 更新目标放置位置标记（黄色半透明夹爪）
+            target_sapien_pose = sapien.Pose(p=target_pose[:3], q=target_pose[3:7])
+            self._update_visual_gripper_pose(
+                self.target_place_marker_entities, target_sapien_pose
+            )
 
         # 单个手臂独自进行抓取
         # 1. 移动到预抓取位置

@@ -22,6 +22,7 @@ def main(
     control_freq: int = 15,
     headless: bool = True,
     obs_mode: Literal["state", "image"] = "state",
+    table_type: Literal["red", "white"] = "red",
     feature: Literal[
         "no-retry",
         "no-grasp_sample",
@@ -48,6 +49,11 @@ def main(
         obs_mode=obs_mode,
         ray_tracing=ray_tracing,
     )
+    
+    # 设置环境的随机种子
+    if seed is not None:
+        env.seed(seed)
+        logger.info(f"环境随机种子已设置: {seed}")
     assert isinstance(env.unwrapped, BimanualManipulationEnv)
     planner = BimanualPlanner(
         urdf_path=f"{env.unwrapped.robot.name}/robot.urdf",
@@ -59,7 +65,7 @@ def main(
         env=env,
     )
 
-    save_dir = Path(dataset_dir) / env_name / feature / tag
+    save_dir = Path(dataset_dir) / env_name / table_type / feature / tag
     num_collected = 0
     num_tries = 0
     meta_info_list = []

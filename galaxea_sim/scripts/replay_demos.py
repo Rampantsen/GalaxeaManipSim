@@ -29,6 +29,7 @@ def main(
         "normal",
         "all",
     ] = "all",
+    table_type: Literal["red", "white"] = "red",
     control_freq: int = 15,
     headless: bool = True,
     ray_tracing: bool = False,
@@ -41,8 +42,8 @@ def main(
         ray_tracing=ray_tracing,
     )
     assert isinstance(env.unwrapped, BimanualManipulationEnv)
-    save_dir = Path(dataset_dir) / env_name / feature / "replayed"
-    source_dir = Path(dataset_dir) / env_name / feature
+    save_dir = Path(dataset_dir) / env_name / table_type / feature / "replayed"
+    source_dir = Path(dataset_dir) / env_name / table_type / feature
     meta_info_path = Path(source_dir) / "meta_info.json"
     h5_paths = list(
         Path(source_dir).glob("*/*.h5")
@@ -80,9 +81,10 @@ def main(
 
         traj = []
         info = {}
+        # meta_info_list 的第0个元素是元信息，demo数据从第1个元素开始
         reset_info = (
-            source_meta_info_list[demo_idx]["reset_info"]
-            if source_meta_info_list is not None
+            source_meta_info_list[demo_idx + 1]["reset_info"]
+            if source_meta_info_list is not None and len(source_meta_info_list) > demo_idx + 1
             else {}
         )
         env.reset()
