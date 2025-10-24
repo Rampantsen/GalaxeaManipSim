@@ -26,11 +26,12 @@ def main(
     feature: Literal[
         "no-retry",
         "no-grasp_sample",
-        "traj_augmented_only",
         "grasp_sample_only",
         "retry_only",
         "baseline",
+        "traj_augmented",  
         "all",
+        "test",
     ] = "all",
     tag: Literal["collected"] = "collected",
     ray_tracing: bool = True,
@@ -79,28 +80,86 @@ def main(
         )
     )
 
+    # 检查是否需要启用累积误差跟踪
+    # 当feature包含traj_augmented时，启用误差跟踪（用于触发重新规划）
+    enable_error_tracking = "traj_augmented" in feature or feature in ["all"] or feature in ["no-retry"]
+    if enable_error_tracking:
+        planner.enable_traj_augmented_mode(True)
+        #logger.info("已启用轨迹增强模式（执行噪声）：记录正确action，但发送带噪声的action给机器人")
+
     while num_collected < num_demos:
 
         num_steps = 0
         traj = []
         info = {}
         _, rest_info = env.reset()
+        
+        # 每个demo开始时重置累积误差
+        if enable_error_tracking:
+            planner.reset_accumulated_error()
+        
         if not headless:
             env.render()
         for substep in env.unwrapped.solution():
-            actions = planner.solve(
+            result = planner.solve(
                 substep,
                 env.unwrapped.robot.get_qpos(),
                 env.unwrapped.last_gripper_cmd,
                 verbose=False,
             )
-            if actions is not None:
-                for action in actions:
-                    num_steps += 1
-                    obs, _, _, _, info = env.step(action)
-                    traj.append(obs)
-                    if not headless:
-                        env.render()
+            if result is not None:
+                # 检查返回值是否是tuple（有执行噪声）
+                if isinstance(result, tuple):
+                    executed_actions, planned_actions = result
+                    # 使用带噪声的action执行，但记录正确的action
+                    for i, (executed_action, planned_action) in enumerate(zip(executed_actions, planned_actions)):
+                        num_steps += 1
+                        
+                        # 执行带噪声的action
+                        obs, _, _, _, info = env.step(executed_action)
+                        
+                        # 如果启用了误差跟踪，计算末端执行器位置误差
+                        if enable_error_tracking:
+                            # 获取执行后的实际qpos
+                            actual_qpos = env.unwrapped.robot.get_qpos()
+                            
+                            # 构建目标qpos（将planned_action填入实际qpos）
+                            target_qpos = actual_qpos.copy()
+                            target_qpos[env.unwrapped.left_arm_joint_indices] = planned_action[:planner.left_arm_action_dim]
+                            target_qpos[env.unwrapped.right_arm_joint_indices] = planned_action[planner.left_arm_action_dim+1:planner.left_arm_action_dim+1+planner.right_arm_action_dim]
+                            
+                            # 使用FK计算末端执行器位置误差
+                            ee_pos_error, _ = planner.compute_pose_error(target_qpos, actual_qpos)
+                            
+                            # 只记录最大的单步误差，而不是累加所有误差
+                            planner.accumulated_position_error = max(
+                                planner.accumulated_position_error, 
+                                ee_pos_error
+                            )
+                            
+                            # 每隔一定步数检查是否需要重新规划
+                            if (i + 1) % 10 == 0 and planner.check_replan_needed():
+                                #logger.info(f"检测到末端位置误差过大，触发重新规划。当前最大误差: {planner.accumulated_position_error:.4f}m")
+                                planner.reset_accumulated_error()
+                                # 注意：重新规划需要从当前状态重新生成substep
+                                # 这里简单地重置误差继续执行，实际应用中可以中断并重新规划
+                        
+                        # 在obs中记录的是正确的action（用于训练）
+                        # 这样策略学到的是正确的动作，但观察到的状态包含执行误差
+                        obs['upper_body_action_dict']['left_arm_joint_position_cmd'] = planned_action[:planner.left_arm_action_dim]
+                        obs['upper_body_action_dict']['right_arm_joint_position_cmd'] = planned_action[planner.left_arm_action_dim+1:planner.left_arm_action_dim+1+planner.right_arm_action_dim]
+                        traj.append(obs)
+                        if not headless:
+                            env.render()
+                else:
+                    # 正常模式
+                    actions = result
+                    for action in actions:
+                        num_steps += 1
+                        obs, _, _, _, info = env.step(action)
+                        traj.append(obs)
+                        if not headless:
+                            env.render()
         num_tries += 1
         if info["success"]:
             save_dict_list_to_hdf5(traj, save_dir / f"demo_{num_collected}.h5")

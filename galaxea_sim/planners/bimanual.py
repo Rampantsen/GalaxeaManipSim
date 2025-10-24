@@ -74,6 +74,14 @@ class BimanualPlanner(BasePlanner):
             self.left_arm_planner.user_joint_names,
         )
         self.action_dim = self.left_arm_action_dim + self.right_arm_action_dim + 2
+        
+        # 轨迹增强（执行噪声模式）相关参数
+        self.accumulated_position_error = 0.0  # 末端位置最大误差（米）
+        self.accumulated_rotation_error = 0.0  # 保留字段（未使用）
+        self.traj_augmented_enabled = False   # 是否启用轨迹增强（执行噪声）
+        self.planned_actions = []  # 存储规划的正确action
+        self.executed_actions = []  # 存储带噪声的执行action
+        
         logger.debug(
             f"Left arm move group joint indices: {self.left_arm_planner.move_group_joint_indices}"
         )
@@ -169,251 +177,6 @@ class BimanualPlanner(BasePlanner):
         else:
             return self.plan_pose(left_pose, right_pose, robot_qpos, verbose=verbose)
 
-    def move_to_pose_traj_augmented(
-        self,
-        left_pose=None,
-        right_pose=None,
-        robot_qpos=None,
-        with_screw=False,
-        verbose=True,
-        num_waypoints=None,
-        noise_std=0.02,
-    ):
-        """
-        Enhanced trajectory planning with waypoint augmentation.
-
-        This function:
-        1. Plans initial trajectory from start to goal
-        2. Randomly selects 4-8 waypoints along the trajectory
-        3. Adds noise to joint positions at these waypoints
-        4. Re-plans through the noisy waypoints to create augmented trajectory
-
-        Args:
-            left_pose: Target pose for left arm (can be None)
-            right_pose: Target pose for right arm (can be None)
-            robot_qpos: Current robot joint positions
-            with_screw: Whether to use screw motion planning
-            verbose: Whether to print debug info
-            num_waypoints: Number of waypoints to add (1-3), randomly chosen if None
-            noise_std: Standard deviation of noise to add to waypoints
-
-        Returns:
-            Tuple of (left_result, right_result) with augmented trajectories
-        """
-        # First get the original trajectory
-        left_pose = self._to_pose(left_pose)
-        right_pose = self._to_pose(right_pose)
-        if with_screw:
-            original_result = self.plan_screw(left_pose, right_pose, robot_qpos)
-        else:
-            original_result = self.plan_pose(
-                left_pose, right_pose, robot_qpos, verbose=verbose
-            )
-
-        if original_result is None:
-            # logger.error("Original trajectory planning failed")
-            return None
-
-        left_result, right_result = original_result
-        if num_waypoints is None:
-            num_waypoints = np.random.randint(4, 8)  # 2 to 3 waypoints
-        if left_result is not None and left_result["position"].shape[0] > 0:
-            left_result_aug = self._augment_single_arm_trajectory(
-                left_result,
-                robot_qpos,
-                self.left_arm_planner,
-                self.left_arm_planner_mask,
-                num_waypoints,
-                noise_std,
-                verbose,
-            )
-            left_result = left_result_aug
-        # Process right arm trajectory if exists
-        if right_result is not None and right_result["position"].shape[0] > 0:
-            right_result = self._augment_single_arm_trajectory(
-                right_result,
-                robot_qpos,
-                self.right_arm_planner,
-                self.right_arm_planner_mask,
-                num_waypoints,
-                noise_std,
-                verbose,
-            )
-        return left_result, right_result
-
-    def _augment_single_arm_trajectory(
-        self,
-        arm_result,
-        robot_qpos,
-        arm_planner,
-        arm_planner_mask,
-        num_waypoints,
-        noise_std,
-        verbose,
-    ):
-        positions = arm_result["position"]
-        if positions is None or len(positions.shape) != 2:
-            return arm_result
-
-        num_steps, dim = positions.shape
-        if num_steps < 1:
-            return arm_result
-
-        # 获取该臂的可控关节数（与get_move_trajectory的切片方式一致）
-        arm_action_dim = int(np.sum((~arm_planner_mask).astype(np.int32)))
-        arm_action_dim = max(0, min(arm_action_dim, dim))
-        if arm_action_dim == 0:
-            return arm_result
-
-        # 均匀选择中间点
-        max_mid = max(0, num_steps - 2)
-        m = num_waypoints
-        m = max(1, min(m, max_mid)) if max_mid > 0 else 0
-        if m == 0:
-            return arm_result
-
-        # 均匀采样中间点
-        if num_steps <= 2:
-            mid_indices = []
-        else:
-            # 在 [1, num_steps-2] 范围内均匀选择 m 个点
-            mid_indices = np.linspace(1, num_steps - 2, m, dtype=int)
-            mid_indices = np.unique(mid_indices)  # 去重并排序
-
-        waypoint_indices = np.concatenate([[0], mid_indices, [num_steps - 1]])
-
-        # 获取起点和终点的关节配置
-        start_config = positions[0]
-        end_config = positions[-1]
-
-        # 给中间点加噪声
-        noisy_waypoints = []
-        for idx in waypoint_indices:
-            if idx == 0 or idx == num_steps - 1:
-                # 起点和终点不加噪声
-                noisy_waypoints.append(positions[idx])
-            else:
-                # 中间点加噪声（只对最后K维加噪，与get_move_trajectory一致）
-                noisy_config = positions[idx].copy()
-                noise = np.random.normal(0.0, noise_std, size=(arm_action_dim,))
-                noisy_config[-arm_action_dim:] += noise
-                noisy_waypoints.append(noisy_config)
-
-        # 使用前向运动学重新计算轨迹
-        try:
-            # 将关节配置转换为笛卡尔空间路径点
-            cartesian_waypoints = []
-            for config in noisy_waypoints:
-                # 使用FK计算末端执行器位姿
-                ee_poses = self._fk.compute_forward_kinematics(config)
-                cartesian_waypoints.append(ee_poses)
-
-            # 在笛卡尔空间进行插值，然后转换回关节空间
-            augmented_positions = []
-            for i in range(len(waypoint_indices) - 1):
-                start_idx = waypoint_indices[i]
-                end_idx = waypoint_indices[i + 1]
-                seg_len = end_idx - start_idx
-
-                if seg_len <= 0:
-                    continue
-
-                # 在笛卡尔空间插值
-                start_pose = cartesian_waypoints[i]
-                end_pose = cartesian_waypoints[i + 1]
-
-                for j in range(seg_len + 1):
-                    if i == 0 and j == 0:
-                        # 第一个点
-                        alpha = 0.0
-                    elif i == len(waypoint_indices) - 2 and j == seg_len:
-                        # 最后一个点
-                        alpha = 1.0
-                    else:
-                        alpha = j / seg_len
-
-                    # 线性插值笛卡尔位姿
-                    interp_pose = (1 - alpha) * start_pose + alpha * end_pose
-
-                    # 使用IK将笛卡尔位姿转换回关节配置
-                    # 这里需要根据你的IK实现来调整
-                    # 暂时使用线性插值作为fallback
-                    if alpha == 0.0:
-                        joint_config = noisy_waypoints[i]
-                    elif alpha == 1.0:
-                        joint_config = noisy_waypoints[i + 1]
-                    else:
-                        joint_config = (1 - alpha) * noisy_waypoints[
-                            i
-                        ] + alpha * noisy_waypoints[i + 1]
-
-                    augmented_positions.append(joint_config)
-
-            augmented_positions = np.stack(augmented_positions, axis=0)
-
-            if augmented_positions.shape[0] != num_steps:
-                if verbose:
-                    logger.warning(
-                        f"Augmented length {augmented_positions.shape[0]} != original {num_steps}, using linear interpolation fallback"
-                    )
-                # Fallback to linear interpolation
-                augmented_positions = []
-                for i in range(len(waypoint_indices) - 1):
-                    start_idx = waypoint_indices[i]
-                    end_idx = waypoint_indices[i + 1]
-                    seg_len = end_idx - start_idx
-
-                    if seg_len <= 0:
-                        continue
-
-                    for j in range(seg_len + 1):
-                        if i == 0 and j == 0:
-                            alpha = 0.0
-                        elif i == len(waypoint_indices) - 2 and j == seg_len:
-                            alpha = 1.0
-                        else:
-                            alpha = j / seg_len
-
-                        joint_config = (1 - alpha) * noisy_waypoints[
-                            i
-                        ] + alpha * noisy_waypoints[i + 1]
-                        augmented_positions.append(joint_config)
-
-                augmented_positions = np.stack(augmented_positions, axis=0)
-
-        except Exception as e:
-            if verbose:
-                logger.warning(
-                    f"FK-based augmentation failed: {e}, using linear interpolation fallback"
-                )
-            # Fallback to linear interpolation
-            augmented_positions = []
-            for i in range(len(waypoint_indices) - 1):
-                start_idx = waypoint_indices[i]
-                end_idx = waypoint_indices[i + 1]
-                seg_len = end_idx - start_idx
-
-                if seg_len <= 0:
-                    continue
-
-                for j in range(seg_len + 1):
-                    if i == 0 and j == 0:
-                        alpha = 0.0
-                    elif i == len(waypoint_indices) - 2 and j == seg_len:
-                        alpha = 1.0
-                    else:
-                        alpha = j / seg_len
-
-                    joint_config = (1 - alpha) * noisy_waypoints[
-                        i
-                    ] + alpha * noisy_waypoints[i + 1]
-                    augmented_positions.append(joint_config)
-
-            augmented_positions = np.stack(augmented_positions, axis=0)
-
-        new_result = dict(arm_result)
-        new_result["position"] = augmented_positions
-        return new_result
 
     def get_move_trajectory(self, init_pos, left_result=None, right_result=None):
         n_step_left = left_result["position"].shape[0] if left_result else 0
@@ -461,7 +224,143 @@ class BimanualPlanner(BasePlanner):
         trajectory[GRIPPER_STEPS:, gripper_indices] = gripper_target_state
         return trajectory
 
+    def enable_traj_augmented_mode(self, enable=True):
+        """启用或禁用轨迹增强模式（执行噪声）"""
+        self.traj_augmented_enabled = enable
+        if enable:
+            logger.info("轨迹增强模式（执行噪声）已启用")
+        else:
+            logger.info("轨迹增强模式（执行噪声）已禁用")
+    
+    def reset_accumulated_error(self):
+        """重置累积误差"""
+        self.accumulated_position_error = 0.0
+        self.accumulated_rotation_error = 0.0
+        self.planned_actions = []
+        self.executed_actions = []
+        #logger.debug("累积误差已重置")
+    
+    def add_execution_noise(self, actions, noise_probability=0.3, 
+                           position_noise_std=0.005, rotation_noise_std=0.05):
+        """
+        给动作序列添加执行噪声，模拟机器人执行误差
+        
+        Args:
+            actions: 规划的动作序列 (N, action_dim)
+            noise_probability: 产生噪声的概率
+            position_noise_std: 位置噪声标准差 (关节空间，弧度)
+            rotation_noise_std: 旋转噪声标准差 (关节空间，弧度)
+        
+        Returns:
+            noisy_actions: 带噪声的动作序列
+            planned_actions: 原始规划的动作（用于记录）
+        """
+        if actions is None:
+            return None, None
+        
+        planned_actions = actions.copy()
+        noisy_actions = actions.copy()
+        
+        # 对每一步动作添加噪声
+        for i in range(len(noisy_actions)):
+            # 以一定概率添加噪声
+            if np.random.random() < noise_probability:
+                # 对关节位置添加高斯噪声（不包括夹爪关节）
+                # 左臂关节噪声
+                left_noise = np.random.normal(0, position_noise_std, self.left_arm_action_dim)
+                noisy_actions[i, :self.left_arm_action_dim] += left_noise
+                
+                # 右臂关节噪声
+                right_start = self.left_arm_action_dim + 1
+                right_end = right_start + self.right_arm_action_dim
+                right_noise = np.random.normal(0, position_noise_std, self.right_arm_action_dim)
+                noisy_actions[i, right_start:right_end] += right_noise
+                
+                # 夹爪不添加噪声，保持精确控制
+        
+        return noisy_actions, planned_actions
+    
+    def compute_pose_error(self, qpos_planned, qpos_actual):
+        """
+        计算末端执行器位置误差（使用FK）
+        
+        Args:
+            qpos_planned: 目标关节位置
+            qpos_actual: 实际关节位置
+        
+        Returns:
+            position_error: 末端执行器位置误差，取左右臂最大值 (m)
+            rotation_error: 末端执行器旋转误差，取左右臂最大值 (rad)
+        """
+        # 使用FK计算末端执行器位姿
+        # 注意：这里假设qpos是全身关节位置
+        try:
+            # 计算规划位姿的末端执行器位置
+            self._fk.compute_forward_kinematics(qpos_planned)
+            # get_link_pose需要link索引: 0=left_ee, 1=right_ee
+            planned_left_pose = self._fk.get_link_pose(0)
+            planned_right_pose = self._fk.get_link_pose(1)
+            
+            # 计算实际位姿的末端执行器位置
+            self._fk.compute_forward_kinematics(qpos_actual)
+            actual_left_pose = self._fk.get_link_pose(0)
+            actual_right_pose = self._fk.get_link_pose(1)
+            
+            # 计算位置误差（取左右臂最大值）
+            position_errors = []
+            rotation_errors = []
+            
+            for planned_pose, actual_pose in [(planned_left_pose, actual_left_pose), 
+                                               (planned_right_pose, actual_right_pose)]:
+                # 位置误差
+                pos_error = np.linalg.norm(planned_pose.p - actual_pose.p)
+                position_errors.append(pos_error)
+                
+                # 旋转误差（使用四元数点积计算角度差）
+                q1 = planned_pose.q
+                q2 = actual_pose.q
+                dot_product = np.abs(np.dot(q1, q2))
+                dot_product = np.clip(dot_product, -1.0, 1.0)
+                rot_error = 2 * np.arccos(dot_product)
+                rotation_errors.append(rot_error)
+            
+            # 返回最大误差
+            return max(position_errors), max(rotation_errors)
+        except Exception as e:
+            logger.warning(f"计算位姿误差失败: {e}")
+            return 0.0, 0.0
+    
+    def check_replan_needed(self):
+        """
+        检查是否需要重新规划
+        
+        Returns:
+            bool: 如果末端位置误差超过阈值返回True
+        """
+        if not self.traj_augmented_enabled:
+            return False
+        
+        # 使用末端位置误差（单位：米）
+        # 阈值设置为0.03m（3厘米）比较合理
+        error_threshold = 0.04  # 米
+        
+        if self.accumulated_position_error > error_threshold:
+            # logger.warning(
+            #     f"末端位置误差超过阈值! "
+            #     f"当前误差: {self.accumulated_position_error:.4f}m ({self.accumulated_position_error*1000:.1f}mm), "
+            #     f"阈值: {error_threshold}m ({error_threshold*1000:.0f}mm)"
+            # )
+            return True
+        return False
+
     def solve(self, substep, robot_qpos_in_sim, last_gripper_cmd, verbose=False):
+        """
+        规划并求解动作序列
+        
+        如果method是traj_augmented，会应用执行噪声：
+        - 返回 (executed_actions, planned_actions)
+        否则返回 actions
+        """
         method, kwargs = substep
         robot_qpos = self.sim2mplib_mapping(robot_qpos_in_sim)
         init_pos = np.zeros(self.action_dim)
@@ -476,21 +375,32 @@ class BimanualPlanner(BasePlanner):
             result = self.move_to_pose(**kwargs, robot_qpos=robot_qpos, verbose=verbose)
             if result is None:
                 return None
-            return self.get_move_trajectory(init_pos, *result)
-        if method == "move_to_pose_traj_augmented":
-            result = self.move_to_pose_traj_augmented(
+            trajectory = self.get_move_trajectory(init_pos, *result)
+        elif method == "move_to_pose_traj_augmented":
+            # 轨迹增强：规划正确的轨迹，在执行时添加噪声
+            result = self.move_to_pose(
                 **kwargs, robot_qpos=robot_qpos, verbose=verbose
             )
             if result is None:
                 return None
-            # if result["status"] != "Success":
-            return self.get_move_trajectory(init_pos, *result)
+            trajectory = self.get_move_trajectory(init_pos, *result)
+            
+            # traj_augmented方法总是应用执行噪声
+            # 返回 (noisy_trajectory, planned_trajectory)
+            noisy_trajectory, planned_trajectory = self.add_execution_noise(
+                trajectory,
+                noise_probability=kwargs.get('noise_probability', 0.6),
+                position_noise_std=kwargs.get('position_noise_std', 0.008),
+            )
+            return (noisy_trajectory, planned_trajectory)
         elif method in ["open_gripper", "close_gripper"]:
-            return self.get_gripper_trajectory(init_pos, method, kwargs)
+            trajectory = self.get_gripper_trajectory(init_pos, method, kwargs)
         else:
             raise NotImplementedError(
                 f"Method {method} not implemented in BimanualPlanner"
             )
+        
+        return trajectory
 
 
 # class SapienBimanualPlanner(BimanualPlanner):
