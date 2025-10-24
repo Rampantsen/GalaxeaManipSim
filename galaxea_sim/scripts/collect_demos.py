@@ -65,6 +65,10 @@ def main(
         control_freq=env.unwrapped.control_freq,
         env=env,
     )
+    
+    # 设置planner到环境中（用于grasp_sample的IK测试）
+    if hasattr(env.unwrapped, 'set_planner'):
+        env.unwrapped.set_planner(planner)
 
     save_dir = Path(dataset_dir) / env_name / table_type / feature / tag
     num_collected = 0
@@ -147,7 +151,9 @@ def main(
                         # 在obs中记录的是正确的action（用于训练）
                         # 这样策略学到的是正确的动作，但观察到的状态包含执行误差
                         obs['upper_body_action_dict']['left_arm_joint_position_cmd'] = planned_action[:planner.left_arm_action_dim]
+                        obs['upper_body_action_dict']['left_arm_gripper_position_cmd'] = planned_action[planner.left_arm_action_dim]
                         obs['upper_body_action_dict']['right_arm_joint_position_cmd'] = planned_action[planner.left_arm_action_dim+1:planner.left_arm_action_dim+1+planner.right_arm_action_dim]
+                        obs['upper_body_action_dict']['right_arm_gripper_position_cmd'] = planned_action[planner.left_arm_action_dim+1+planner.right_arm_action_dim]
                         traj.append(obs)
                         if not headless:
                             env.render()

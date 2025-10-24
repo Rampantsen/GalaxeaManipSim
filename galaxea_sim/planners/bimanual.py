@@ -82,15 +82,15 @@ class BimanualPlanner(BasePlanner):
         self.planned_actions = []  # 存储规划的正确action
         self.executed_actions = []  # 存储带噪声的执行action
         
-        logger.debug(
-            f"Left arm move group joint indices: {self.left_arm_planner.move_group_joint_indices}"
-        )
-        logger.debug(
-            f"Right arm move group joint indices: {self.right_arm_planner.move_group_joint_indices}"
-        )
-        logger.debug(f"Left arm planner mask: {self.left_arm_planner_mask}")
-        logger.debug(f"Right arm planner mask: {self.right_arm_planner_mask}")
-        logger.debug(f"action_dim: {self.action_dim}")
+        # logger.debug(
+        #     f"Left arm move group joint indices: {self.left_arm_planner.move_group_joint_indices}"
+        # )
+        # logger.debug(
+        #     f"Right arm move group joint indices: {self.right_arm_planner.move_group_joint_indices}"
+        # )
+        # logger.debug(f"Left arm planner mask: {self.left_arm_planner_mask}")
+        # logger.debug(f"Right arm planner mask: {self.right_arm_planner_mask}")
+        # logger.debug(f"action_dim: {self.action_dim}")
 
     @property
     def left_arm_action_dim(self):
