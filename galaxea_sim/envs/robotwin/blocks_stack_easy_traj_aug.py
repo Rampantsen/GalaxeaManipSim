@@ -29,8 +29,8 @@ class BlocksStackEasyTrajAugEnv(RoboTwinBaseEnv):
         self,
         *args,
         enable_retry=False,
-        enable_traj_augmented=True,
-        enable_visual=True,
+        enable_traj_augmented=False,
+        enable_visual=False,
         enable_grasp_sample=True,
         table_type="white", # "redwood" or "whitewood"
         **kwargs,
@@ -53,7 +53,7 @@ class BlocksStackEasyTrajAugEnv(RoboTwinBaseEnv):
 
     def _rand_pose(self):
         return rand_pose(
-            xlim=[-0.12, -0.02],
+            xlim=[-0.12, -0.01],
             ylim=[-0.45, 0.45],
             zlim=[self.block_half_size],
             qpos=[1, 0, 0, 0],
@@ -276,7 +276,7 @@ class BlocksStackEasyTrajAugEnv(RoboTwinBaseEnv):
         if specified_grasp_angle is not None:
             self.grasp_angle = specified_grasp_angle
         else:
-            self.grasp_angle = random.choice(GRASP_PITCH_ANGLES)
+            self.grasp_angle = math.pi / 4
 
         # 使用指定的物体euler角度，如果没有指定则根据物体当前姿态计算
         if specified_actor_euler is not None:
@@ -673,7 +673,7 @@ class BlocksStackEasyTrajAugEnv(RoboTwinBaseEnv):
 
         # 检查物体是否在机械臂附近（水平距离小于5cm）
         horizontal_distance = np.linalg.norm(object_pos[:2] - ee_pos[:2])
-        is_near_arm = horizontal_distance < 0.05
+        is_near_arm = horizontal_distance < 0.1
 
         # 检查物体是否被抬起（高度大于桌面+10cm）
         is_lifted = object_pos[2] > self.table_height + 0.1
@@ -681,7 +681,6 @@ class BlocksStackEasyTrajAugEnv(RoboTwinBaseEnv):
         # 检查物体是否在机械臂上方（z轴距离小于10cm）
         vertical_distance = abs(object_pos[2] - ee_pos[2])
         is_above_arm = vertical_distance < 0.2
-
         # 综合判断：物体在机械臂附近、被抬起、且在机械臂上方
         is_grasped = is_near_arm and is_lifted and is_above_arm
 

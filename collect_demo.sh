@@ -69,7 +69,7 @@ python -m galaxea_sim.scripts.collect_demos \
 # 2️⃣ 回放 demonstrations
 python -m galaxea_sim.scripts.replay_demos \
   --env-name "$ENV_NAME" \
-  --num-demos "$((NUM_DEMOS-500))" \
+  --num-demos "$((NUM_DEMOS-600))" \
   --feature "$FEATURE" \
   --table_type "$TABLE_TYPE"\
   --ray_tracing

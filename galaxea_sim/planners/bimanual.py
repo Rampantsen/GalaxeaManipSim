@@ -240,13 +240,14 @@ class BimanualPlanner(BasePlanner):
         self.executed_actions = []
         #logger.debug("累积误差已重置")
     
-    def add_execution_noise(self, actions, noise_probability=0.3, 
+    def add_execution_noise(self, actions, active_arm="both", noise_probability=0.3, 
                            position_noise_std=0.005, rotation_noise_std=0.05):
         """
         给动作序列添加执行噪声，模拟机器人执行误差
         
         Args:
             actions: 规划的动作序列 (N, action_dim)
+            active_arm: 正在执行任务的手臂 ("left", "right", 或 "both")
             noise_probability: 产生噪声的概率
             position_noise_std: 位置噪声标准差 (关节空间，弧度)
             rotation_noise_std: 旋转噪声标准差 (关节空间，弧度)
@@ -265,16 +266,18 @@ class BimanualPlanner(BasePlanner):
         for i in range(len(noisy_actions)):
             # 以一定概率添加噪声
             if np.random.random() < noise_probability:
-                # 对关节位置添加高斯噪声（不包括夹爪关节）
-                # 左臂关节噪声
-                left_noise = np.random.normal(0, position_noise_std, self.left_arm_action_dim)
-                noisy_actions[i, :self.left_arm_action_dim] += left_noise
+                # 只给正在执行任务的手臂添加噪声
+                if active_arm in ["left", "both"]:
+                    # 左臂关节噪声
+                    left_noise = np.random.normal(0, position_noise_std, self.left_arm_action_dim)
+                    noisy_actions[i, :self.left_arm_action_dim] += left_noise
                 
-                # 右臂关节噪声
-                right_start = self.left_arm_action_dim + 1
-                right_end = right_start + self.right_arm_action_dim
-                right_noise = np.random.normal(0, position_noise_std, self.right_arm_action_dim)
-                noisy_actions[i, right_start:right_end] += right_noise
+                if active_arm in ["right", "both"]:
+                    # 右臂关节噪声
+                    right_start = self.left_arm_action_dim + 1
+                    right_end = right_start + self.right_arm_action_dim
+                    right_noise = np.random.normal(0, position_noise_std, self.right_arm_action_dim)
+                    noisy_actions[i, right_start:right_end] += right_noise
                 
                 # 夹爪不添加噪声，保持精确控制
         
@@ -383,14 +386,31 @@ class BimanualPlanner(BasePlanner):
             )
             if result is None:
                 return None
+            
+            # 检测哪个手臂在执行任务
+            left_result, right_result = result
+            active_arm = "both"  # 默认两个手臂都活动
+            
+            # 判断实际活动的手臂
+            left_active = left_result is not None and left_result.get("position") is not None and left_result["position"].shape[0] > 0
+            right_active = right_result is not None and right_result.get("position") is not None and right_result["position"].shape[0] > 0
+            
+            if left_active and not right_active:
+                active_arm = "left"
+            elif right_active and not left_active:
+                active_arm = "right"
+            elif left_active and right_active:
+                active_arm = "both"
+            
             trajectory = self.get_move_trajectory(init_pos, *result)
             
-            # traj_augmented方法总是应用执行噪声
+            # traj_augmented方法总是应用执行噪声，但只给活动的手臂添加
             # 返回 (noisy_trajectory, planned_trajectory)
             noisy_trajectory, planned_trajectory = self.add_execution_noise(
                 trajectory,
+                active_arm=active_arm,
                 noise_probability=kwargs.get('noise_probability', 0.6),
-                position_noise_std=kwargs.get('position_noise_std', 0.008),
+                position_noise_std=kwargs.get('position_noise_std', 0.02),
             )
             return (noisy_trajectory, planned_trajectory)
         elif method in ["open_gripper", "close_gripper"]:

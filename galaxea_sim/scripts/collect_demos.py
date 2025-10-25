@@ -89,7 +89,7 @@ def main(
     enable_error_tracking = "traj_augmented" in feature or feature in ["all"] or feature in ["no-retry"]
     if enable_error_tracking:
         planner.enable_traj_augmented_mode(True)
-        #logger.info("已启用轨迹增强模式（执行噪声）：记录正确action，但发送带噪声的action给机器人")
+        logger.info("已启用轨迹增强模式（执行噪声）：记录正确action，但发送带噪声的action给机器人")
 
     while num_collected < num_demos:
 
@@ -151,9 +151,9 @@ def main(
                         # 在obs中记录的是正确的action（用于训练）
                         # 这样策略学到的是正确的动作，但观察到的状态包含执行误差
                         obs['upper_body_action_dict']['left_arm_joint_position_cmd'] = planned_action[:planner.left_arm_action_dim]
-                        obs['upper_body_action_dict']['left_arm_gripper_position_cmd'] = planned_action[planner.left_arm_action_dim]
+                        obs['upper_body_action_dict']['left_arm_gripper_position_cmd'] = np.array([planned_action[planner.left_arm_action_dim]])
                         obs['upper_body_action_dict']['right_arm_joint_position_cmd'] = planned_action[planner.left_arm_action_dim+1:planner.left_arm_action_dim+1+planner.right_arm_action_dim]
-                        obs['upper_body_action_dict']['right_arm_gripper_position_cmd'] = planned_action[planner.left_arm_action_dim+1+planner.right_arm_action_dim]
+                        obs['upper_body_action_dict']['right_arm_gripper_position_cmd'] = np.array([planned_action[planner.left_arm_action_dim+1+planner.right_arm_action_dim]])
                         traj.append(obs)
                         if not headless:
                             env.render()
