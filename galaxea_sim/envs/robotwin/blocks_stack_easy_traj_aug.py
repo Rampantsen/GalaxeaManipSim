@@ -29,7 +29,7 @@ class BlocksStackEasyTrajAugEnv(RoboTwinBaseEnv):
         self,
         *args,
         enable_retry=False,
-        enable_traj_augmented=False,
+        enable_traj_augmented=True,
         enable_visual=False,
         enable_grasp_sample=True,
         table_type="white", # "redwood" or "whitewood"

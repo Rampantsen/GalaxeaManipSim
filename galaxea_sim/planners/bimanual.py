@@ -259,6 +259,9 @@ class BimanualPlanner(BasePlanner):
         if actions is None:
             return None, None
         
+        # 调试信息
+        # logger.debug(f"添加执行噪声: active_arm={active_arm}, noise_prob={noise_probability}, noise_std={position_noise_std}")
+        
         planned_actions = actions.copy()
         noisy_actions = actions.copy()
         
@@ -344,17 +347,52 @@ class BimanualPlanner(BasePlanner):
             return False
         
         # 使用末端位置误差（单位：米）
-        # 阈值设置为0.03m（3厘米）比较合理
-        error_threshold = 0.04  # 米
+        # 阈值设置为0.05m（5厘米）
+        error_threshold = 0.03  # 米
         
         if self.accumulated_position_error > error_threshold:
-            # logger.warning(
-            #     f"末端位置误差超过阈值! "
-            #     f"当前误差: {self.accumulated_position_error:.4f}m ({self.accumulated_position_error*1000:.1f}mm), "
-            #     f"阈值: {error_threshold}m ({error_threshold*1000:.0f}mm)"
-            # )
+            logger.warning(
+                f"末端位置误差超过阈值，需要重新规划! "
+                f"当前误差: {self.accumulated_position_error:.4f}m ({self.accumulated_position_error*1000:.1f}mm), "
+                f"阈值: {error_threshold}m ({error_threshold*1000:.0f}mm)"
+            )
             return True
         return False
+    
+    def replan_from_current(self, target_pose_left=None, target_pose_right=None, 
+                           current_qpos=None, verbose=False):
+        """
+        从当前位置重新规划到目标位置
+        
+        Args:
+            target_pose_left: 左臂目标位姿 (可以是None)
+            target_pose_right: 右臂目标位姿 (可以是None)
+            current_qpos: 当前机器人关节位置
+            verbose: 是否打印调试信息
+            
+        Returns:
+            (left_result, right_result) 或 None
+        """
+        if current_qpos is None:
+            logger.error("重新规划需要提供当前关节位置")
+            return None
+        
+        logger.info("从当前位置重新规划轨迹...")
+        
+        # 使用当前位置作为起点，规划到目标位置
+        result = self.move_to_pose(
+            left_pose=target_pose_left,
+            right_pose=target_pose_right,
+            robot_qpos=current_qpos,
+            verbose=verbose
+        )
+        
+        if result is None:
+            logger.error("重新规划失败")
+            return None
+        
+        logger.info("重新规划成功")
+        return result
 
     def solve(self, substep, robot_qpos_in_sim, last_gripper_cmd, verbose=False):
         """
@@ -387,13 +425,13 @@ class BimanualPlanner(BasePlanner):
             if result is None:
                 return None
             
-            # 检测哪个手臂在执行任务
-            left_result, right_result = result
-            active_arm = "both"  # 默认两个手臂都活动
+            # 检测哪个手臂在执行任务（根据传入的pose参数）
+            left_pose_param = kwargs.get('left_pose')
+            right_pose_param = kwargs.get('right_pose')
             
-            # 判断实际活动的手臂
-            left_active = left_result is not None and left_result.get("position") is not None and left_result["position"].shape[0] > 0
-            right_active = right_result is not None and right_result.get("position") is not None and right_result["position"].shape[0] > 0
+            # 如果pose参数不是None，说明这个手臂需要移动
+            left_active = left_pose_param is not None
+            right_active = right_pose_param is not None
             
             if left_active and not right_active:
                 active_arm = "left"
@@ -401,6 +439,11 @@ class BimanualPlanner(BasePlanner):
                 active_arm = "right"
             elif left_active and right_active:
                 active_arm = "both"
+            else:
+                active_arm = "both"  # 都是None，默认both
+            
+            # 调试信息
+            # logger.debug(f"检测到活动手臂: {active_arm} (left_pose={left_active}, right_pose={right_active})")
             
             trajectory = self.get_move_trajectory(init_pos, *result)
             
@@ -409,8 +452,8 @@ class BimanualPlanner(BasePlanner):
             noisy_trajectory, planned_trajectory = self.add_execution_noise(
                 trajectory,
                 active_arm=active_arm,
-                noise_probability=kwargs.get('noise_probability', 0.6),
-                position_noise_std=kwargs.get('position_noise_std', 0.02),
+                noise_probability=kwargs.get('noise_probability', 0.4),
+                position_noise_std=kwargs.get('position_noise_std', 0.015),
             )
             return (noisy_trajectory, planned_trajectory)
         elif method in ["open_gripper", "close_gripper"]:
