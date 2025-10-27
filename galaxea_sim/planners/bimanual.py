@@ -241,7 +241,7 @@ class BimanualPlanner(BasePlanner):
         #logger.debug("累积误差已重置")
     
     def add_execution_noise(self, actions, active_arm="both", noise_probability=0.3, 
-                           position_noise_std=0.005, rotation_noise_std=0.05):
+                           position_noise_std=0.005, rotation_noise_std=0.5):
         """
         给动作序列添加执行噪声，模拟机器人执行误差
         
@@ -351,11 +351,11 @@ class BimanualPlanner(BasePlanner):
         error_threshold = 0.03  # 米
         
         if self.accumulated_position_error > error_threshold:
-            logger.warning(
-                f"末端位置误差超过阈值，需要重新规划! "
-                f"当前误差: {self.accumulated_position_error:.4f}m ({self.accumulated_position_error*1000:.1f}mm), "
-                f"阈值: {error_threshold}m ({error_threshold*1000:.0f}mm)"
-            )
+            # logger.warning(
+            #     f"末端位置误差超过阈值，需要重新规划! "
+            #     f"当前误差: {self.accumulated_position_error:.4f}m ({self.accumulated_position_error*1000:.1f}mm), "
+            #     f"阈值: {error_threshold}m ({error_threshold*1000:.0f}mm)"
+            # )
             return True
         return False
     
@@ -376,8 +376,8 @@ class BimanualPlanner(BasePlanner):
         if current_qpos is None:
             logger.error("重新规划需要提供当前关节位置")
             return None
-        
-        logger.info("从当前位置重新规划轨迹...")
+        if verbose: 
+            logger.info("从当前位置重新规划轨迹...")
         
         # 使用当前位置作为起点，规划到目标位置
         result = self.move_to_pose(
@@ -388,10 +388,11 @@ class BimanualPlanner(BasePlanner):
         )
         
         if result is None:
-            logger.error("重新规划失败")
+            if verbose:
+                logger.error("重新规划失败")
             return None
-        
-        logger.info("重新规划成功")
+        if verbose:
+            logger.info("重新规划成功")
         return result
 
     def solve(self, substep, robot_qpos_in_sim, last_gripper_cmd, verbose=False):
@@ -452,7 +453,7 @@ class BimanualPlanner(BasePlanner):
             noisy_trajectory, planned_trajectory = self.add_execution_noise(
                 trajectory,
                 active_arm=active_arm,
-                noise_probability=kwargs.get('noise_probability', 0.4),
+                noise_probability=kwargs.get('noise_probability', 0.3),
                 position_noise_std=kwargs.get('position_noise_std', 0.015),
             )
             return (noisy_trajectory, planned_trajectory)

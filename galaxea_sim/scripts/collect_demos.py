@@ -165,9 +165,9 @@ def main(
                             )
                             
                             # 每隔一定步数检查是否需要重新规划
-                            if (i + 1) % 10 == 0 and planner.check_replan_needed():
+                            if (i + 1) % 30 == 0 and planner.check_replan_needed():
                                 # 从当前位置重新规划到原目标位姿
-                                logger.info(f"触发重新规划! 当前误差: {planner.accumulated_position_error:.4f}m")
+                                #logger.info(f"触发重新规划! 当前误差: {planner.accumulated_position_error:.4f}m")
                                 
                                 current_qpos = env.unwrapped.robot.get_qpos()
                                 
@@ -175,9 +175,7 @@ def main(
                                 replan_target_left = original_target_left if left_pose_in_substep is not None else None
                                 replan_target_right = original_target_right if right_pose_in_substep is not None else None
                                 
-                                print(f"🔄 重新规划: left_pose={left_pose_in_substep is not None}, right_pose={right_pose_in_substep is not None}")
-                                print(f"   replan_target_left={replan_target_left is not None}, replan_target_right={replan_target_right is not None}")
-                                
+                                                               
                                 replan_result = planner.replan_from_current(
                                     target_pose_left=replan_target_left,
                                     target_pose_right=replan_target_right,
@@ -216,7 +214,7 @@ def main(
                                     planned_actions = new_planned
                                     i = 0  # 重置索引
                                     planner.reset_accumulated_error()
-                                    logger.info("✅ 重新规划完成，继续执行新轨迹")
+                                    #logger.info("✅ 重新规划完成，继续执行新轨迹")
                                     continue
                                 else:
                                     logger.warning("⚠️ 重新规划失败，继续执行原轨迹")

@@ -3,7 +3,7 @@ feature=$1
 seed=$2
 start_checkpoint=${3:-0}  # 可选参数：起始checkpoint，默认为0（从头开始）
 
-base_dir="/home/sen/workspace/galaxea/GalaxeaManipSim/outputs/ACT/1000episode/${feature}/checkpoints"
+base_dir="/home/sen/workspace/galaxea/GalaxeaManisim/outputs/ACT/R1ProBlocksStackEasy-traj_aug/${feature}/checkpoints"
 
 echo "起始checkpoint: ${start_checkpoint}"
 echo ""
@@ -48,7 +48,8 @@ for checkpoint_dir in $checkpoint_dirs; do
         --pretrained-policy-path "${checkpoint_dir}/pretrained_model" \
         --target_controller_type bimanual_relaxed_ik \
         --dataset_repo_id "galaxea/R1ProBlocksStackEasy-traj_aug/${feature}" \
-        --seed ${seed}
+        --seed ${seed}\
+        --save-video
     
     echo "完成评估: ${checkpoint_name}"
     echo ""

@@ -28,6 +28,7 @@ def evaluate(
     num_evaluations: int = 100,
     temporal_ensemble: bool = True,  # ACT 特有的时序集成
     save_video: bool = False,
+    ray_tracing: bool = False,  # 添加ray_tracing参数
     seed: int = 10,  # 添加seed参数
 ):
     """在模拟环
@@ -40,7 +41,7 @@ def evaluate(
         torch.cuda.manual_seed_all(seed)
 
     output_directory = (
-        Path(pretrained_policy_path).parent
+        Path(pretrained_policy_path).parent.parent
         / "evaluations"
         / time.strftime("%Y%m%d_%H%M%S")
     )
@@ -74,6 +75,7 @@ def evaluate(
             task=task,
             target_controller_type=target_controller_type,
             temporal_ensemble=temporal_ensemble,
+            ray_tracing=ray_tracing,
             seed=seed,
             num_evaluations=num_evaluations,
             pretrained_policy_path=pretrained_policy_path,
@@ -85,6 +87,7 @@ def evaluate(
         headless=headless,
         max_episode_steps=1000,
         controller_type=target_controller_type,
+        ray_tracing=ray_tracing,  # 添加ray_tracing参数
     )
 
     success_count_running = 0

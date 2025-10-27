@@ -11,7 +11,7 @@
 
 # 默认参数
 ENV_NAME=""
-NUM_DEMOS=1500
+NUM_DEMOS=500
 FEATURE="normal"
 SEED=1
 TABLE_TYPE="red"
@@ -69,7 +69,7 @@ python -m galaxea_sim.scripts.collect_demos \
 # 2️⃣ 回放 demonstrations
 python -m galaxea_sim.scripts.replay_demos \
   --env-name "$ENV_NAME" \
-  --num-demos "$((NUM_DEMOS-600))" \
+  --num-demos "$((NUM_DEMOS-300))" \
   --feature "$FEATURE" \
   --table_type "$TABLE_TYPE"\
   --ray_tracing
