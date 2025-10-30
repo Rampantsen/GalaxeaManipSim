@@ -1,6 +1,7 @@
 import datetime
 import uuid
-
+import numpy as np
+import random
 from typing import Literal, Optional
 
 import gymnasium as gym
@@ -19,10 +20,22 @@ def main(
     num_demos: int = 100,
     dataset_dir: str = "datasets",
     control_freq: int = 15,
-    headless: bool = False,
+    headless: bool = True,
     obs_mode: Literal["state", "image"] = "state",
-    tag: Optional[str] = "collected",
+    table_type: Literal["red", "white"] = "red",
+    feature: Literal[
+        "no-retry",
+        "no-grasp_sample",
+        "grasp_sample_only",
+        "retry_only",
+        "baseline",
+        "traj_augmented",  
+        "all",
+        "test",
+    ] = "all",
+    tag: Literal["collected"] = "collected",
     ray_tracing: bool = False,
+    seed: Optional[int] = None,  # 添加seed参数
 ):
     env = gym.make(
         env_name,
@@ -31,6 +44,11 @@ def main(
         obs_mode=obs_mode,
         ray_tracing=ray_tracing,
     )
+    if seed is not None:
+        random.seed(seed)
+        np.random.seed(seed)
+        logger.info(f"设置随机种子: {seed}")
+
     assert isinstance(env.unwrapped, BimanualManipulationEnv)
     planner = BimanualPlanner(
         urdf_path=f"{env.unwrapped.robot.name}/robot.urdf",
@@ -40,11 +58,24 @@ def main(
         active_joint_names=env.unwrapped.active_joint_names,
         control_freq=env.unwrapped.control_freq,
     )
+    
+    # 设置planner到环境中，用于grasp_sample的IK测试
+    if hasattr(env.unwrapped, 'set_planner'):
+        env.unwrapped.set_planner(planner)
 
-    save_dir = Path(dataset_dir) / env_name / tag
+    save_dir = Path(dataset_dir) / env_name / table_type / feature /tag
     num_collected = 0
     num_tries = 0
     meta_info_list = []
+    fail_meta_info_list = []
+    meta_info_list.append(
+        dict(
+            env_name=env_name,
+            feature=feature,
+            seed=seed,
+            num_demos=num_demos,
+        )
+    )
     while num_collected < num_demos:
         num_steps = 0
         traj = []
@@ -82,7 +113,12 @@ def main(
             logger.info(
                 f"Collected {num_collected} demos in {num_tries} tries. Success rate: {int(num_collected/num_tries*100)}%"
             )
-
+        else:
+            fail_meta_info = dict(
+                reset_info=rest_info,
+            )
+            fail_meta_info_list.append(fail_meta_info)
+            save_dict_list_to_json(fail_meta_info_list, save_dir / "fail_meta_info.json")
 
 if __name__ == "__main__":
     tyro.cli(main)

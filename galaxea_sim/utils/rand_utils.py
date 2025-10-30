@@ -28,8 +28,8 @@ def rand_pose(
 
     rotate = qpos
     if rotate_rand:
-        angles = [np.random.uniform(-rotate_lim[i], rotate_lim[i]) for i in range(3)]
-        rotate_quat = t3d.euler.euler2quat(*angles)
-        rotate = t3d.quaternions.qmult(rotate, rotate_quat)
+            z_angle = np.random.uniform(-rotate_lim[2], rotate_lim[2])
+            rotate_quat = t3d.euler.euler2quat(0, 0, z_angle)
+            rotate = rotate_quat
 
     return sapien.Pose([x, y, z], rotate)

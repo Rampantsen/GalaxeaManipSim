@@ -8,20 +8,30 @@ import tyro
 import tqdm
 from loguru import logger
 from pathlib import Path
-
+from typing import Literal
 import galaxea_sim.envs
 from galaxea_sim.envs.base.bimanual_manipulation import BimanualManipulationEnv
 from galaxea_sim.utils.data_utils import save_dict_list_to_hdf5, save_dict_list_to_json 
 import json
 
 def main(
-    env_name: str, 
-    num_demos: int = 100, 
-    dataset_dir: str = 'datasets', 
-    target_controller_type: str = 'bimanual_relaxed_ik', 
-    control_freq: int = 15, 
-    headless: bool = True, 
-    ray_tracing: bool = False
+    env_name: str,
+    num_demos: int = 100,
+    dataset_dir: str = "datasets",
+    target_controller_type: str = "bimanual_relaxed_ik",
+    feature: Literal[
+        "no-retry",
+        "no-grasp_sample",
+        "traj_augmented_only",
+        "grasp_sample_only",
+        "retry_only",
+        "baseline",
+        "all",
+    ] = "all",
+    table_type: Literal["red", "white"] = "red",
+    control_freq: int = 15,
+    headless: bool = True,
+    ray_tracing: bool = False,
 ):
     env = gym.make(
         env_name,
@@ -31,8 +41,8 @@ def main(
         ray_tracing=ray_tracing,
     )
     assert isinstance(env.unwrapped, BimanualManipulationEnv)
-    save_dir = Path(dataset_dir) / env_name / "replayed"
-    source_dir = Path(dataset_dir) / env_name
+    save_dir = Path(dataset_dir) / env_name /table_type /feature/ "replayed"
+    source_dir = Path(dataset_dir) / env_name /table_type /feature
     meta_info_path = Path(source_dir) / "meta_info.json"
     h5_paths = list(Path(source_dir).glob("*/*.h5")) # except for final in the source_dir
     h5_paths = [
@@ -73,7 +83,7 @@ def main(
         
         traj = []
         info = {}
-        reset_info = source_meta_info_list[demo_idx]["reset_info"] if source_meta_info_list is not None else {}
+        reset_info = source_meta_info_list[demo_idx+1]["reset_info"] if source_meta_info_list is not None else {}
         env.reset()
         env.reset_world(reset_info)
         # env.render()

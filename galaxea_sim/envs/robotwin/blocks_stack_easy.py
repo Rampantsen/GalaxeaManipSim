@@ -1,3 +1,4 @@
+from gc import enable
 import math
 from copy import deepcopy
 
@@ -13,14 +14,35 @@ class BlocksStackEasyEnv(RoboTwinBaseEnv):
     place_pos_x_offset = -0.2
     block_half_size = 0.02
 
+    def __init__(
+        self,
+        *args,
+        enable_replan=False,
+        enable_grasp_sample=False,
+        enable_visual=False,
+        table_type="white", # "redwood" or "whitewood"
+        **kwargs,
+    ):
+        # 将 table_type 传递给父类
+        super().__init__(*args, table_type=table_type, **kwargs)
+        self.current_arm = None  # 跟踪当前使用的机械臂
+        self.enable_replan= enable_replan  # 控制是否启用retry逻辑
+        self.enable_grasp_sample = enable_grasp_sample  # 控制是否启用抓取角度采样
+        self.enable_visual = enable_visual  # 控制是否启用可视化
+        self.planner = None 
+
+    def set_planner(self, planner):
+        """设置planner引用，用于grasp_sample的IK测试"""
+        self.planner = planner
+
     def _rand_pose(self):
         return rand_pose(
-            xlim=[-0.12, -0.01],
-            ylim=[-0.25, 0.25],
+            xlim=[-0.12, 0.04],
+            ylim=[-0.55, 0.55],
             zlim=[self.block_half_size],
-            qpos=[0.27, 0.27, 0.65, 0.65],
+            qpos=[1, 0, 0, 0],
             rotate_rand=True,
-            rotate_lim=[0, 0.1, 0],
+            rotate_lim=[0, 0, np.pi],
         )
 
     def _setup_block1(self):
@@ -40,7 +62,7 @@ class BlocksStackEasyEnv(RoboTwinBaseEnv):
                 self.block_half_size,
                 self.block_half_size,
             ),
-            color=(1, 0, 0),
+            color=(250/255, 0, 10/255),
             name="box",
         )
 
@@ -66,7 +88,7 @@ class BlocksStackEasyEnv(RoboTwinBaseEnv):
                 self.block_half_size,
                 self.block_half_size,
             ),
-            color=(0, 1, 0),
+            color=(0, 200/255, 30/255),
             name="box",
         )
 
@@ -89,44 +111,64 @@ class BlocksStackEasyEnv(RoboTwinBaseEnv):
                 )
             )
 
-    def rot_down_grip_pose(self, pose: sapien.Pose):
-        angle = math.pi / 4 if self.robot_name == "r1_pro" else math.pi / 2
+    def rot_down_grip_pose(self, pose: sapien.Pose,grasp_angle: float = math.pi / 4):
         pose_mat = pose.to_transformation_matrix()
-        (lower_trans_quat := sapien.Pose()).set_rpy(rpy=(np.array([0, angle, 0])))
+        (lower_trans_quat := sapien.Pose()).set_rpy(rpy=(np.array([0, grasp_angle, 0])))
         lower_trans_mat = lower_trans_quat.to_transformation_matrix()
 
         new_pos = np.dot(pose_mat, lower_trans_mat)
         new_pose = sapien.Pose(matrix=new_pos)
         return new_pose
 
-    def tf_to_grasp(self, pose: list):
-        if self.robot_name != "r1_pro":
-            return pose
+    def tf_to_grasp(self, pose: list, grasp_angle: float = math.pi / 4):
+        # 根据 grasp_angle 动态选择 offset
+        grasp_offsets = {
+            math.pi / 6: [-0.055, 0, 0.025], 
+            math.pi / 5: [-0.052, 0, 0.023],   
+            math.pi / 4: [-0.05, 0, 0.02],  
+        }
+        grasp_offset = grasp_offsets.get(grasp_angle, [-0.05, 0, 0.02])
+        
         origin_pose = sapien.Pose(p=pose[:3], q=pose[3:])
         pose_mat = origin_pose.to_transformation_matrix()
         tf_mat = np.array(
-            [[1, 0, 0, -0.05], [0, 1, 0, 0], [0, 0, 1, 0.02], [0, 0, 0, 1]]
+            [[1, 0, 0, grasp_offset[0]], [0, 1, 0, grasp_offset[1]], [0, 0, 1, grasp_offset[2]], [0, 0, 0, 1]]
         )
         new_pos = np.dot(pose_mat, tf_mat)
         new_pose = sapien.Pose(matrix=new_pos)
         return list(new_pose.p) + list(new_pose.q)
 
-    def move_block(self, actor: sapien.Entity, id, last_arm=None):
+    def move_block(self, actor: sapien.Entity, id, last_arm=None,enable_grasp_sample=False,enable_replan=False):
         actor_rpy = actor.get_pose().get_rpy()
         actor_pos = actor.get_pose().p
-        actor_euler = math.fmod(actor_rpy[2], math.pi / 2)
+        
+        # 确定使用哪个机械臂
+        now_arm = "right" if actor_pos[1] < 0 else "left"
+        
+        # 根据 enable_grasp_sample 决定抓取角度
+        if enable_grasp_sample:
+            grasp_angle, actor_euler = self._sample_best_grasp_angle(actor, now_arm)
+            if grasp_angle is None:
+                # 如果没有找到可行角度，使用默认值
+                print(f"Warning: No valid grasp angle found for {now_arm} arm, using default")
+                grasp_angle = math.pi / 4
+                actor_euler = math.fmod(actor_rpy[2], math.pi / 2)
+        else:
+            grasp_angle = math.pi / 4
+            actor_euler = math.fmod(actor_rpy[2], math.pi / 2)
+        
         if actor_pos[1] < 0:
             # closer to right arm
             grasp_euler = actor_euler
             (grasp_qpose := sapien.Pose()).set_rpy(
                 rpy=(np.array([0, 0, grasp_euler]) + self.robot.right_ee_rpy_offset)
             )
-            grasp_qpose = self.rot_down_grip_pose(grasp_qpose).q.tolist()
+            grasp_qpose = self.rot_down_grip_pose(grasp_qpose, grasp_angle).q.tolist()
 
             (target_qpose := sapien.Pose()).set_rpy(
                 rpy=(np.array([0, 0, math.pi / 2]) + self.robot.right_ee_rpy_offset)
             )
-            target_qpose = self.rot_down_grip_pose(target_qpose).q.tolist()
+            target_qpose = self.rot_down_grip_pose(target_qpose, grasp_angle).q.tolist()
             target_pose = [
                 self.tabletop_center_in_world[0] + self.place_pos_x_offset,
                 0.01,
@@ -137,12 +179,12 @@ class BlocksStackEasyEnv(RoboTwinBaseEnv):
             (grasp_qpose := sapien.Pose()).set_rpy(
                 rpy=(np.array([0, 0, grasp_euler]) + self.robot.right_ee_rpy_offset)
             )
-            grasp_qpose = self.rot_down_grip_pose(grasp_qpose).q.tolist()
+            grasp_qpose = self.rot_down_grip_pose(grasp_qpose, grasp_angle).q.tolist()
 
             (target_qpose := sapien.Pose()).set_rpy(
                 rpy=(np.array([0, 0, -math.pi / 2]) + self.robot.right_ee_rpy_offset)
             )
-            target_qpose = self.rot_down_grip_pose(target_qpose).q.tolist()
+            target_qpose = self.rot_down_grip_pose(target_qpose, grasp_angle).q.tolist()
             target_pose = [
                 self.tabletop_center_in_world[0] + self.place_pos_x_offset,
                 -0.01,
@@ -150,77 +192,134 @@ class BlocksStackEasyEnv(RoboTwinBaseEnv):
             ] + target_qpose
 
         self.grasp_euler = grasp_euler
-        target_pose = self.tf_to_grasp(target_pose)
+        target_pose = self.tf_to_grasp(target_pose, grasp_angle)
         substeps = []
         pre_grasp_pose = list(actor_pos + [0, 0, 0.2]) + grasp_qpose
-        pre_grasp_pose = self.tf_to_grasp(pre_grasp_pose)
-        if actor_pos[1] < 0:
-            now_arm = "right"
-            if now_arm == last_arm or last_arm is None:
-                if now_arm == last_arm:
-                    pose0 = list(
-                        self.robot.right_ee_link.get_entity_pose().p + [0, 0, 0.05]
-                    ) + list(self.robot.right_ee_link.get_entity_pose().q)
-                    substeps.append(("move_to_pose", {"right_pose": pose0}))
-                substeps.append(
-                    ("move_to_pose", {"right_pose": deepcopy(pre_grasp_pose)})
-                )
-            else:
-                substeps.append(
-                    (
-                        "move_to_pose",
-                        {
-                            "right_pose": pre_grasp_pose,
-                            "left_pose": self.robot.left_init_ee_pose,
-                        },
-                    )
-                )
+        pre_grasp_pose = self.tf_to_grasp(pre_grasp_pose, grasp_angle)
+        
+        # 获取初始位置（用于最后回到初始姿态）
+        if now_arm == "right":
+            init_pose = self.robot.right_init_ee_pose
         else:
-            now_arm = "left"
-            if now_arm == last_arm or last_arm is None:
-                if now_arm == last_arm:
-                    pose0 = list(
-                        self.robot.left_ee_link.get_entity_pose().p + [0, 0, 0.05]
-                    ) + list(self.robot.left_ee_link.get_entity_pose().q)
-                    substeps.append(("move_to_pose", {"left_pose": pose0}))
-                substeps.append(
-                    ("move_to_pose", {"left_pose": deepcopy(pre_grasp_pose)})
-                )
-            else:
-                substeps.append(
-                    (
-                        "move_to_pose",
-                        {
-                            "left_pose": pre_grasp_pose,
-                            "right_pose": self.robot.right_init_ee_pose,
-                        },
-                    )
-                )
-
+            init_pose = self.robot.left_init_ee_pose
+        
+        # 单个手臂独自进行抓取，不再处理双臂协调
+        # 1. 移动到预抓取位置
+        substeps.append(("move_to_pose", {f"{now_arm}_pose": deepcopy(pre_grasp_pose)}))
+        
+        # 2. 打开夹爪
         substeps.append(("open_gripper", {"action_mode": now_arm}))
-        pre_grasp_pose[2] -= 0.15
-        substeps.append(("move_to_pose", {f"{now_arm}_pose": deepcopy(pre_grasp_pose)}))
+        
+        # 3. 下降到抓取位置
+        grasp_pose = deepcopy(pre_grasp_pose)
+        grasp_pose[2] -= 0.15  # 下降到物体位置
+        substeps.append(("move_to_pose", {f"{now_arm}_pose": deepcopy(grasp_pose)}))
+        
+        # 4. 关闭夹爪
         substeps.append(("close_gripper", {"action_mode": now_arm}))
-        pre_grasp_pose[2] += 0.15
-        substeps.append(("move_to_pose", {f"{now_arm}_pose": deepcopy(pre_grasp_pose)}))
+        
+        # 5. 抬起到固定安全高度（基于闭合夹爪后的位置）
+        # 设置固定的安全高度：桌面上方 0.30m
+        lift_pose = deepcopy(grasp_pose)
+        lift_pose[2] = self.table_height + 0.2  # 固定的绝对高度
+        substeps.append(("move_to_pose", {f"{now_arm}_pose": deepcopy(lift_pose)}))
+        
+        # 6. 移动到目标位置
         substeps.append(("move_to_pose", {f"{now_arm}_pose": deepcopy(target_pose)}))
+        
+        # 7. 下降放置
         target_pose[2] -= 0.05
         substeps.append(("move_to_pose", {f"{now_arm}_pose": deepcopy(target_pose)}))
+        
+        # 8. 打开夹爪释放物体
         substeps.append(("open_gripper", {"action_mode": now_arm}))
+        
+        # 9. 抬起一点
         target_pose[2] += 0.1
         substeps.append(("move_to_pose", {f"{now_arm}_pose": deepcopy(target_pose)}))
+        
+        # 10. 收回到初始位置
+        substeps.append(("move_to_pose", {f"{now_arm}_pose": init_pose}))
 
         return substeps, now_arm
 
     def solution(self):
-        substeps, last_arm = self.move_block(self.block1, 1)
+        substeps, last_arm = self.move_block(self.block1, 1,enable_grasp_sample=self.enable_grasp_sample,enable_replan=self.enable_replan)
         self.info = f"move block 1,{self.block1.get_pose().p}"
         for substep in substeps:
             yield substep
-        substeps, last_arm = self.move_block(self.block2, 2, last_arm)
+        substeps, last_arm = self.move_block(self.block2, 2, last_arm,enable_grasp_sample=self.enable_grasp_sample,enable_replan=self.enable_replan)
         self.info = f"move block 2,{self.block2.get_pose().p}"
         for substep in substeps:
             yield substep
+
+    def _sample_best_grasp_angle(self, actor, now_arm):
+        """在预抓取阶段采样最佳抓取角度（基于IK可解性）
+        
+        测试3个候选角度（物体朝向的0度、+90度、-90度），
+        选择第一个IK可解的角度进行抓取。
+        
+        Args:
+            actor: 要抓取的物体
+            now_arm: 使用的机械臂 ("left" 或 "right")
+            
+        Returns:
+            tuple: (selected_grasp_angle, selected_actor_euler) 或 (None, None) 如果所有角度都不可解
+        """
+        actor_rpy = actor.get_pose().get_rpy()
+        actor_pos = actor.get_pose().p
+        base_euler = actor_rpy[2]
+        grasp_pitch_angles = [math.pi / 6, math.pi / 5, math.pi / 4]
+
+        candidate_euler_angles = [
+            math.fmod(base_euler, math.pi / 2),  
+            math.fmod(base_euler, math.pi / 2) + math.pi / 2,  
+            math.fmod(base_euler, math.pi / 2) - math.pi / 2, 
+        ]
+        # 如果planner未设置，使用第一个候选角度作为fallback
+        if self.planner is None:
+            print("Warning: Planner not set, using first candidate angle without IK test")
+            return grasp_pitch_angles[0], candidate_euler_angles[0]
+        
+        # 遍历每个候选角度，测试IK是否可解
+        from mplib.pymp import Pose
+        for actor_euler in candidate_euler_angles:
+            for grasp_angle in grasp_pitch_angles:
+                # 计算抓取姿态
+                if actor_pos[1] < 0:  # right arm
+                    grasp_euler = actor_euler
+                    (grasp_qpose := sapien.Pose()).set_rpy(
+                        rpy=(np.array([0, 0, grasp_euler]) + self.robot.right_ee_rpy_offset)
+                    )
+                else:  # left arm
+                    grasp_euler = actor_euler - math.pi / 2
+                    (grasp_qpose := sapien.Pose()).set_rpy(
+                        rpy=(np.array([0, 0, grasp_euler]) + self.robot.right_ee_rpy_offset)
+                    )
+                grasp_qpose = self.rot_down_grip_pose(grasp_qpose, grasp_angle).q.tolist()
+                grasp_pose = list(actor_pos + [0, 0, 0.05]) + grasp_qpose
+                grasp_pose = self.tf_to_grasp(grasp_pose, grasp_angle)
+                test_grasp_pose = Pose(p=grasp_pose[:3], q=grasp_pose[3:])
+                
+                if now_arm == "left":
+                    result = self.planner.move_to_pose(
+                        left_pose=test_grasp_pose,
+                        right_pose=None,
+                        robot_qpos=self.robot.get_qpos(),
+                        verbose=False
+                    )
+                else:
+                    result = self.planner.move_to_pose(
+                        left_pose=None,
+                        right_pose=test_grasp_pose,
+                        robot_qpos=self.robot.get_qpos(),
+                        verbose=False
+                    )
+                
+                if result is not None:
+                    return grasp_angle, actor_euler
+        
+        return grasp_pitch_angles[0], candidate_euler_angles[0]
 
     def _get_info(self):
         block1_pose = self.block1.get_pose().p
