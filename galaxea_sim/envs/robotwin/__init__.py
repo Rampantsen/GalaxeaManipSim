@@ -481,6 +481,16 @@ gym.register(
     ),
     max_episode_steps=400,
 )
+gym.register(
+    id="R1ProPutAppleCabinet-v0",
+    entry_point="galaxea_sim.envs.robotwin.put_apple_cabinet:PutAppleCabinetEnv",
+    disable_env_checker=True,
+    order_enforce=False,
+    kwargs=dict(
+        robot_class=R1ProRobot, robot_kwargs=dict(init_qpos=R1PRO_INIT_QPOS), headless=False
+    ),
+    max_episode_steps=400,
+)
 
 gym.register(
     id="R1LitePutAppleCabinet-v0",

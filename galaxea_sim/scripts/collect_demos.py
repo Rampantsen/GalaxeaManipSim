@@ -24,25 +24,42 @@ def main(
     obs_mode: Literal["state", "image"] = "state",
     table_type: Literal["red", "white"] = "red",
     feature: Literal[
-        "no-retry",
-        "no-grasp_sample",
-        "grasp_sample_only",
-        "retry_only",
         "baseline",
-        "traj_augmented",  
+        "grasp_sample_only",
+        "replan",  # 新增replan模式
         "all",
         "test",
     ] = "all",
     tag: Literal["collected"] = "collected",
     ray_tracing: bool = False,
     seed: Optional[int] = None,  # 添加seed参数
+    enable_grasp_sample: bool = False,  # 是否启用grasp_sample
+    enable_replan: bool = False,  # 是否启用replan
+    replan_prob: float = 0.5,  # replan触发概率
+    replan_noise_min: float = 0.02,  # 噪声范围最小值
+    replan_noise_max: float = 0.05,  # 噪声范围最大值
 ):
+    # 根据feature自动设置enable_grasp_sample和enable_replan
+    if feature == "grasp_sample_only":
+        enable_grasp_sample = True
+    elif feature == "replan":
+        enable_replan = True
+    elif feature == "all":
+        enable_grasp_sample = True
+        enable_replan = True
+    
+    
     env = gym.make(
         env_name,
         control_freq=control_freq,
         headless=headless,
         obs_mode=obs_mode,
         ray_tracing=ray_tracing,
+        enable_grasp_sample=enable_grasp_sample,
+        enable_replan=enable_replan,
+        replan_prob=replan_prob,
+        replan_noise_range=(replan_noise_min, replan_noise_max),
+        # table_type=table_type,
     )
     if seed is not None:
         random.seed(seed)
@@ -74,6 +91,11 @@ def main(
             feature=feature,
             seed=seed,
             num_demos=num_demos,
+            enable_grasp_sample=enable_grasp_sample,
+            enable_replan=enable_replan,
+            replan_prob=replan_prob if enable_replan else None,
+            replan_noise_range=(replan_noise_min, replan_noise_max) if enable_replan else None,
+            has_replan_noise_label=enable_replan,  # 数据是否包含replan噪声标记
         )
     )
     while num_collected < num_demos:
@@ -84,8 +106,15 @@ def main(
         if not headless:
             env.render()
         for substep in env.unwrapped.solution():
+            # 提取substep的metadata
+            method, kwargs = substep
+            is_replan_noise = kwargs.get("_is_replan_noise", False)
+            
+            # 移除内部标记，避免传递给planner
+            kwargs_for_planner = {k: v for k, v in kwargs.items() if not k.startswith("_")}
+            
             actions = planner.solve(
-                substep,
+                (method, kwargs_for_planner),
                 env.unwrapped.robot.get_qpos(),
                 env.unwrapped.last_gripper_cmd,
                 verbose=False,
@@ -94,7 +123,32 @@ def main(
                 for action in actions:
                     num_steps += 1
                     obs, _, _, _, info = env.step(action)
+
+                    # 在关节控制模式下补充末端位姿指令信息，方便后续直接使用eepose数据
+                    upper_obs = obs.get("upper_body_observations", {})
+                    upper_action = obs.get("upper_body_action_dict", {})
+
+                    if isinstance(upper_action, dict) and isinstance(upper_obs, dict):
+                        left_pose = upper_obs.get("left_arm_ee_pose")
+                        right_pose = upper_obs.get("right_arm_ee_pose")
+
+                        if (
+                            left_pose is not None
+                            and "left_arm_ee_pose_cmd" not in upper_action
+                        ):
+                            upper_action["left_arm_ee_pose_cmd"] = left_pose.copy()
+
+                        if (
+                            right_pose is not None
+                            and "right_arm_ee_pose_cmd" not in upper_action
+                        ):
+                            upper_action["right_arm_ee_pose_cmd"] = right_pose.copy()
+
+                    # 添加replan噪声标记（保存所有数据，在读取时决定是否使用）
+                    obs["is_replan_noise"] = is_replan_noise
+                    
                     traj.append(obs)
+                    
                     if not headless:
                         env.render()
         num_tries += 1

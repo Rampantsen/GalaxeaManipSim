@@ -6,7 +6,7 @@ import sapien
 import numpy as np
 
 from galaxea_sim.utils.robotwin_utils import create_box
-from galaxea_sim.utils.rand_utils import rand_pose
+from galaxea_sim.utils.rand_utils import rand_pose, add_pose_noise
 from .robotwin_base import RoboTwinBaseEnv
 
 
@@ -20,7 +20,9 @@ class BlocksStackEasyEnv(RoboTwinBaseEnv):
         enable_replan=False,
         enable_grasp_sample=False,
         enable_visual=False,
-        table_type="white", # "redwood" or "whitewood"
+        table_type="red", # "redwood" or "whitewood"
+        replan_noise_range=(0.02, 0.05),  # replan位置噪声范围
+        replan_prob=0.5,  # replan触发概率
         **kwargs,
     ):
         # 将 table_type 传递给父类
@@ -29,7 +31,9 @@ class BlocksStackEasyEnv(RoboTwinBaseEnv):
         self.enable_replan= enable_replan  # 控制是否启用retry逻辑
         self.enable_grasp_sample = enable_grasp_sample  # 控制是否启用抓取角度采样
         self.enable_visual = enable_visual  # 控制是否启用可视化
-        self.planner = None 
+        self.planner = None
+        self.replan_noise_range = replan_noise_range
+        self.replan_prob = replan_prob 
 
     def set_planner(self, planner):
         """设置planner引用，用于grasp_sample的IK测试"""
@@ -37,8 +41,8 @@ class BlocksStackEasyEnv(RoboTwinBaseEnv):
 
     def _rand_pose(self):
         return rand_pose(
-            xlim=[-0.12, 0.04],
-            ylim=[-0.55, 0.55],
+            xlim=[-0.12, -0.01],
+            ylim=[-0.3,0.3],
             zlim=[self.block_half_size],
             qpos=[1, 0, 0, 0],
             rotate_rand=True,
@@ -195,6 +199,7 @@ class BlocksStackEasyEnv(RoboTwinBaseEnv):
         target_pose = self.tf_to_grasp(target_pose, grasp_angle)
         substeps = []
         pre_grasp_pose = list(actor_pos + [0, 0, 0.2]) + grasp_qpose
+        print(f"pre_grasp_pose: {pre_grasp_pose}")
         pre_grasp_pose = self.tf_to_grasp(pre_grasp_pose, grasp_angle)
         
         # 获取初始位置（用于最后回到初始姿态）
@@ -204,42 +209,76 @@ class BlocksStackEasyEnv(RoboTwinBaseEnv):
             init_pose = self.robot.left_init_ee_pose
         
         # 单个手臂独自进行抓取，不再处理双臂协调
-        # 1. 移动到预抓取位置
-        substeps.append(("move_to_pose", {f"{now_arm}_pose": deepcopy(pre_grasp_pose)}))
+        # Replan方式1：在预抓取位置加噪声
+        should_add_pregrasp_noise = enable_replan and np.random.random() < self.replan_prob
+        if should_add_pregrasp_noise:
+            # 移动到带噪声的预抓取位置（标记为replan_noise）
+            noisy_pre_grasp_pose = add_pose_noise(
+                deepcopy(pre_grasp_pose), 
+                position_noise_range=self.replan_noise_range,
+                orientation_noise_range=0.0,  # 不添加旋转噪声
+                noise_axes=[True, True, False]  # 只在xy平面加噪声，保持z高度
+            )
+            substeps.append(("move_to_pose", {f"{now_arm}_pose": deepcopy(noisy_pre_grasp_pose), "_is_replan_noise": True}))
+            # 从噪声位置replan到正确的预抓取位置
+            substeps.append(("move_to_pose", {f"{now_arm}_pose": deepcopy(pre_grasp_pose), "_is_replan_noise": False}))
+        else:
+            # 1. 直接移动到预抓取位置
+            substeps.append(("move_to_pose", {f"{now_arm}_pose": deepcopy(pre_grasp_pose), "_is_replan_noise": False}))
         
         # 2. 打开夹爪
-        substeps.append(("open_gripper", {"action_mode": now_arm}))
+        substeps.append(("open_gripper", {"action_mode": now_arm, "_is_replan_noise": False}))
         
         # 3. 下降到抓取位置
         grasp_pose = deepcopy(pre_grasp_pose)
         grasp_pose[2] -= 0.15  # 下降到物体位置
-        substeps.append(("move_to_pose", {f"{now_arm}_pose": deepcopy(grasp_pose)}))
         
-        # 4. 关闭夹爪
-        substeps.append(("close_gripper", {"action_mode": now_arm}))
+        # Replan方式2：在抓取位置加噪声（如果方式1没有触发）
+        should_add_grasp_noise = enable_replan and not should_add_pregrasp_noise and np.random.random() < self.replan_prob
+        if should_add_grasp_noise:
+            # 移动到带噪声的抓取位置（可能抓不到物体）（标记为replan_noise）
+            noisy_grasp_pose = add_pose_noise(
+                deepcopy(grasp_pose),
+                position_noise_range=self.replan_noise_range,
+                orientation_noise_range=0.0,
+                noise_axes=[True, True, True] 
+            )
+            substeps.append(("move_to_pose", {f"{now_arm}_pose": deepcopy(noisy_grasp_pose), "_is_replan_noise": True}))
+            # 关闭夹爪（可能抓不到）（标记为replan_noise）
+            substeps.append(("close_gripper", {"action_mode": now_arm, "_is_replan_noise": True}))
+            # 打开夹爪准备重试（标记为replan_noise）
+            substeps.append(("open_gripper", {"action_mode": now_arm, "_is_replan_noise": True}))
+            # Replan到正确位置重新抓取
+            substeps.append(("move_to_pose", {f"{now_arm}_pose": deepcopy(grasp_pose), "_is_replan_noise": False}))
+            substeps.append(("close_gripper", {"action_mode": now_arm, "_is_replan_noise": False}))
+        else:
+            # 正常抓取
+            substeps.append(("move_to_pose", {f"{now_arm}_pose": deepcopy(grasp_pose), "_is_replan_noise": False}))
+            # 4. 关闭夹爪
+            substeps.append(("close_gripper", {"action_mode": now_arm, "_is_replan_noise": False}))
         
         # 5. 抬起到固定安全高度（基于闭合夹爪后的位置）
         # 设置固定的安全高度：桌面上方 0.30m
         lift_pose = deepcopy(grasp_pose)
         lift_pose[2] = self.table_height + 0.2  # 固定的绝对高度
-        substeps.append(("move_to_pose", {f"{now_arm}_pose": deepcopy(lift_pose)}))
+        substeps.append(("move_to_pose", {f"{now_arm}_pose": deepcopy(lift_pose), "_is_replan_noise": False}))
         
         # 6. 移动到目标位置
-        substeps.append(("move_to_pose", {f"{now_arm}_pose": deepcopy(target_pose)}))
+        substeps.append(("move_to_pose", {f"{now_arm}_pose": deepcopy(target_pose), "_is_replan_noise": False}))
         
         # 7. 下降放置
         target_pose[2] -= 0.05
-        substeps.append(("move_to_pose", {f"{now_arm}_pose": deepcopy(target_pose)}))
+        substeps.append(("move_to_pose", {f"{now_arm}_pose": deepcopy(target_pose), "_is_replan_noise": False}))
         
         # 8. 打开夹爪释放物体
-        substeps.append(("open_gripper", {"action_mode": now_arm}))
+        substeps.append(("open_gripper", {"action_mode": now_arm, "_is_replan_noise": False}))
         
         # 9. 抬起一点
         target_pose[2] += 0.1
-        substeps.append(("move_to_pose", {f"{now_arm}_pose": deepcopy(target_pose)}))
+        substeps.append(("move_to_pose", {f"{now_arm}_pose": deepcopy(target_pose), "_is_replan_noise": False}))
         
         # 10. 收回到初始位置
-        substeps.append(("move_to_pose", {f"{now_arm}_pose": init_pose}))
+        substeps.append(("move_to_pose", {f"{now_arm}_pose": init_pose, "_is_replan_noise": False}))
 
         return substeps, now_arm
 
@@ -252,7 +291,39 @@ class BlocksStackEasyEnv(RoboTwinBaseEnv):
         self.info = f"move block 2,{self.block2.get_pose().p}"
         for substep in substeps:
             yield substep
+    def evaluate_grasp(self, actor, arm):
+        """评估物体是否被成功抓取
 
+        Args:
+            actor: 要检测的物体
+            arm: 使用的机械臂 ("left" 或 "right")
+
+        Returns:
+            bool: 如果物体被成功抓取返回True，否则返回False
+        """
+        # 获取物体位置
+        object_pos = actor.get_pose().p
+
+        # 获取对应机械臂的末端执行器位置
+        if arm == "left":
+            ee_pos = self.robot.left_ee_link.get_entity_pose().p
+        else:
+            ee_pos = self.robot.right_ee_link.get_entity_pose().p
+
+        # 检查物体是否在机械臂附近（水平距离小于5cm）
+        horizontal_distance = np.linalg.norm(object_pos[:2] - ee_pos[:2])
+        is_near_arm = horizontal_distance < 0.1
+
+        # 检查物体是否被抬起（高度大于桌面+10cm）
+        is_lifted = object_pos[2] > self.table_height + 0.1
+
+        # 检查物体是否在机械臂上方（z轴距离小于10cm）
+        vertical_distance = abs(object_pos[2] - ee_pos[2])
+        is_above_arm = vertical_distance < 0.2
+        # 综合判断：物体在机械臂附近、被抬起、且在机械臂上方
+        is_grasped = is_near_arm and is_lifted and is_above_arm
+
+        return is_grasped
     def _sample_best_grasp_angle(self, actor, now_arm):
         """在预抓取阶段采样最佳抓取角度（基于IK可解性）
         

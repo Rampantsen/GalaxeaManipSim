@@ -20,12 +20,9 @@ def main(
     dataset_dir: str = "datasets",
     target_controller_type: str = "bimanual_relaxed_ik",
     feature: Literal[
-        "no-retry",
-        "no-grasp_sample",
-        "traj_augmented_only",
-        "grasp_sample_only",
-        "retry_only",
         "baseline",
+        "grasp_sample_only",
+        "replan",  # 新增replan模式
         "all",
     ] = "all",
     table_type: Literal["red", "white"] = "red",

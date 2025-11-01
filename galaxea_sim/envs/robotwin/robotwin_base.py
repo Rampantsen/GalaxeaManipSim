@@ -78,7 +78,7 @@ class RoboTwinBaseEnv(BimanualManipulationEnv):
             )
         elif table_type == "red":
             # 使用 Wood085A PBR 材质（完整的纹理贴图）
-            texture_base_path = "/home/sen/workspace/galaxea/GalaxeaManisim/galaxea_sim/assets/robotwin_models/table/Wood069_2K-PNG"
+            texture_base_path = "/home/sen/workspace/galaxea/GalaxeaManipSim/galaxea_sim/assets/robotwin_models/table/Wood069_2K-PNG"
             
             self.table = create_table(
                 self._scene,
@@ -94,7 +94,7 @@ class RoboTwinBaseEnv(BimanualManipulationEnv):
             )
 
         elif table_type == "white":
-            texture_base_path = "/home/sen/workspace/galaxea/GalaxeaManisim/galaxea_sim/assets/robotwin_models/table/Poliigon_WoodVeneerOak_7760"
+            texture_base_path = "/home/sen/workspace/galaxea/GalaxeaManipSim/galaxea_sim/assets/robotwin_models/table/Poliigon_WoodVeneerOak_7760"
             self.table = create_table(
                 self._scene,
                 sapien.Pose(p=self.tabletop_center_in_world),
@@ -109,7 +109,7 @@ class RoboTwinBaseEnv(BimanualManipulationEnv):
                 brightness=1.5,  # 增加到2.5，更白更亮
             )
         # elif table_type == "Wood068":
-        #     texture_base_path = "/home/sen/workspace/galaxea/GalaxeaManisim/galaxea_sim/assets/robotwin_models/table/Wood068_4K-PNG"
+        #     texture_base_path = "/home/sen/workspace/galaxea/GalaxeaManipSim/galaxea_sim/assets/robotwin_models/table/Wood068_4K-PNG"
         #     self.table = create_table(
         #         self._scene,
         #         sapien.Pose(p=self.tabletop_center_in_world),

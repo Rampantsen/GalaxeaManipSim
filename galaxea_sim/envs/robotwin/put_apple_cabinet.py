@@ -1,5 +1,5 @@
 from copy import deepcopy
-
+import math
 import sapien
 import numpy as np
 
@@ -8,6 +8,26 @@ from galaxea_sim.utils.rand_utils import rand_pose
 from .robotwin_base import RoboTwinBaseEnv
 
 class PutAppleCabinetEnv(RoboTwinBaseEnv):
+    def __init__(
+        self,
+        *args,
+        enable_replan=False,
+        enable_grasp_sample=False,
+        enable_visual=False,
+        table_type="red", # "redwood" or "whitewood"
+        replan_noise_range=(0.02, 0.05),  # replan位置噪声范围
+        replan_prob=0.5,  # replan触发概率
+        **kwargs,
+    ):
+        # 将 table_type 传递给父类
+        super().__init__(*args, table_type=table_type, **kwargs)
+        self.current_arm = None  # 跟踪当前使用的机械臂
+        self.enable_replan= enable_replan  # 控制是否启用retry逻辑
+        self.enable_grasp_sample = enable_grasp_sample  # 控制是否启用抓取角度采样
+        self.enable_visual = enable_visual  # 控制是否启用可视化
+        self.planner = None
+        self.replan_noise_range = replan_noise_range
+        self.replan_prob = replan_prob 
     def _setup_apple(self):
         apple_pose = rand_pose(
             xlim=[-0.2, -0.1],
@@ -51,32 +71,69 @@ class PutAppleCabinetEnv(RoboTwinBaseEnv):
         self._setup_apple()
         if reset_info is not None:
             self.apple.set_pose(sapien.Pose(p=reset_info["init_apple_pose"][:3], q=reset_info["init_apple_pose"][3:]))
+
+    def rot_down_grip_pose(self, pose: sapien.Pose,grasp_angle: float = math.pi / 4):
+        pose_mat = pose.to_transformation_matrix()
+        (lower_trans_quat := sapien.Pose()).set_rpy(rpy=(np.array([0, grasp_angle, 0])))
+        lower_trans_mat = lower_trans_quat.to_transformation_matrix()
+
+        new_pos = np.dot(pose_mat, lower_trans_mat)
+        new_pose = sapien.Pose(matrix=new_pos)
+        return new_pose
+
+    def tf_to_grasp(self, pose: list, grasp_angle: float = math.pi / 4, is_apple: bool = True):
+        # 根据 grasp_angle 动态选择 offset
+        grasp_apple_offsets = {
+            math.pi / 6: [-0.055, 0, 0.025], 
+            math.pi / 5: [-0.052, 0, 0.023],   
+            math.pi / 4: [-0.05, 0, 0.02],  
+        }
+        grasp_cabinet_offsets = {
+            math.pi / 6: [-0.055, 0, 0.025], 
+            math.pi / 5: [-0.052, 0, 0.023],   
+            math.pi / 4: [-0.05, 0, 0.02],  
+        }
+        if is_apple:
+            grasp_offset = grasp_apple_offsets.get(grasp_angle, [-0.05, 0, 0.02])
+        else:
+            grasp_offset = grasp_cabinet_offsets.get(grasp_angle, [-0.05, 0, 0.02])
         
+        origin_pose = sapien.Pose(p=pose[:3], q=pose[3:])
+        pose_mat = origin_pose.to_transformation_matrix()
+        tf_mat = np.array(
+            [[1, 0, 0, grasp_offset[0]], [0, 1, 0, grasp_offset[1]], [0, 0, 1, grasp_offset[2]], [0, 0, 0, 1]]
+        )
+        new_pos = np.dot(pose_mat, tf_mat)
+        new_pose = sapien.Pose(matrix=new_pos)
+        return list(new_pose.p) + list(new_pose.q)
     def solution(self):
-        pre_pose0 = list(self.cabinet.get_pose().p + [-0.25, 0.07, 0]) + [0.707, 0.707, 0, 0]
-        pose0 = list(self.cabinet.get_pose().p + [-0.25, 0.07, -0.09]) + [0.707, 0.707, 0, 0]
-        pose1 = list(self.apple.get_pose().p + [0, 0, 0.17]) + [0.707, 0, 0.707, 0]
-        yield ("move_to_pose", {"left_pose": deepcopy(pre_pose0), "right_pose": deepcopy(pose1)})
+        pose0=[0.588399, 0.265163, 0.916226,0.599119, -0.326059, -0.646799, -0.341165]
+        pose0 = self.tf_to_grasp(pose0, math.pi / 4, is_apple=True)
         yield ("move_to_pose", {"left_pose": deepcopy(pose0)})
-        yield ("open_gripper", {"action_mode": "both"})
-        pose0[0] += 0.075
-        pose1[2] -= 0.15
-        yield ("move_to_pose", {"left_pose": deepcopy(pose0), "right_pose": deepcopy(pose1)})
-        yield ("close_gripper", {"action_mode": "both"})
-        pose0[0] -= 0.15
-        pose1[2] += 0.15
-        yield ("move_to_pose", {"left_pose": deepcopy(pose0), "right_pose": deepcopy(pose1)})
+        #pre_pose0 = list(self.cabinet.get_pose().p + [-0.25, 0.07, 0]) + [0.707, 0.707, 0, 0]
+        #pose0 = list(self.cabinet.get_pose().p + [-0.25, 0.07, -0.09]) + [0.707, 0.707, 0, 0]
+        # pose1 = list(self.apple.get_pose().p + [0, 0, 0.17]) + [0.707, 0, 0.707, 0]
+        # yield ("move_to_pose", {"left_pose": deepcopy(pre_pose0), "right_pose": deepcopy(pose1)})
+        # yield ("move_to_pose", {"left_pose": deepcopy(pose0)})
+        # yield ("open_gripper", {"action_mode": "both"})
+        # pose0[0] += 0.075
+        # pose1[2] -= 0.15
+        # yield ("move_to_pose", {"left_pose": deepcopy(pose0), "right_pose": deepcopy(pose1)})
+        # yield ("close_gripper", {"action_mode": "both"})
+        # pose0[0] -= 0.15
+        # pose1[2] += 0.15
+        # yield ("move_to_pose", {"left_pose": deepcopy(pose0), "right_pose": deepcopy(pose1)})
         
-        pose2 = list(self.cabinet.get_pose().p + [-0.18, -0.12, 0.02]) + [0.707, 0, 0, 0.707]
-        yield ("move_to_pose", {"right_pose": deepcopy(pose2)})
-        yield ("open_gripper", {"action_mode": "right", "steps": 30})
-        pose0[0] += 0.15
-        pose2[1] -= 0.15
-        yield ("move_to_pose", {"left_pose": deepcopy(pose0), "right_pose": deepcopy(pose2)})
-        yield ("open_gripper", {"action_mode": "left"})
-        pose0[0] -= 0.05
-        yield ("move_to_pose", {"left_pose": deepcopy(pose0)})
-        yield ("move_to_pose", {"left_pose": self.robot.left_init_ee_pose, "right_pose": self.robot.right_init_ee_pose})
+        # pose2 = list(self.cabinet.get_pose().p + [-0.18, -0.12, 0.02]) + [0.707, 0, 0, 0.707]
+        # yield ("move_to_pose", {"right_pose": deepcopy(pose2)})
+        # yield ("open_gripper", {"action_mode": "right", "steps": 30})
+        # pose0[0] += 0.15
+        # pose2[1] -= 0.15
+        # yield ("move_to_pose", {"left_pose": deepcopy(pose0), "right_pose": deepcopy(pose2)})
+        # yield ("open_gripper", {"action_mode": "left"})
+        # pose0[0] -= 0.05
+        # yield ("move_to_pose", {"left_pose": deepcopy(pose0)})
+        # yield ("move_to_pose", {"left_pose": self.robot.left_init_ee_pose, "right_pose": self.robot.right_init_ee_pose})
         
     def _get_info(self):
         success = self.apple.get_pose().p[0] - self.cabinet.get_pose().p[0] < 0.2 and self.apple.get_pose().p[0] > self.cabinet.get_pose().p[0] - 0.2
