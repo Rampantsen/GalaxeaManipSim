@@ -20,7 +20,7 @@ class BlocksStackEasyEnv(RoboTwinBaseEnv):
         enable_replan=False,
         enable_grasp_sample=False,
         enable_visual=False,
-        table_type="red", # "redwood" or "whitewood"
+        table_type="white", # "redwood" or "whitewood"
         replan_noise_range=(0.02, 0.05),  # replan位置噪声范围
         replan_prob=0.5,  # replan触发概率
         **kwargs,
@@ -41,8 +41,8 @@ class BlocksStackEasyEnv(RoboTwinBaseEnv):
 
     def _rand_pose(self):
         return rand_pose(
-            xlim=[-0.12, -0.01],
-            ylim=[-0.3,0.3],
+            xlim=[-0.12, 0.04],
+            ylim=[-0.55,0.55],
             zlim=[self.block_half_size],
             qpos=[1, 0, 0, 0],
             rotate_rand=True,
@@ -199,7 +199,7 @@ class BlocksStackEasyEnv(RoboTwinBaseEnv):
         target_pose = self.tf_to_grasp(target_pose, grasp_angle)
         substeps = []
         pre_grasp_pose = list(actor_pos + [0, 0, 0.2]) + grasp_qpose
-        print(f"pre_grasp_pose: {pre_grasp_pose}")
+        # print(f"pre_grasp_pose: {pre_grasp_pose}")
         pre_grasp_pose = self.tf_to_grasp(pre_grasp_pose, grasp_angle)
         
         # 获取初始位置（用于最后回到初始姿态）
