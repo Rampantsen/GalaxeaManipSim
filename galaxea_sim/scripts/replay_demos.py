@@ -18,13 +18,8 @@ def main(
     env_name: str,
     num_demos: int = 100,
     dataset_dir: str = "datasets",
-    target_controller_type: str = "bimanual_relaxed_ik",
-    feature: Literal[
-        "baseline",
-        "grasp_sample_only",
-        "replan",  # 新增replan模式
-        "all",
-    ] = "all",
+    target_controller_type: str = "bimanual_joint_position",
+    feature: Literal["baseline", "grasp_sample_only", "replan", "all"] = "all",
     table_type: Literal["red", "white"] = "red",
     control_freq: int = 15,
     headless: bool = True,

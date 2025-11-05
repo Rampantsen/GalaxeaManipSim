@@ -22,7 +22,7 @@ def evaluate(
     task: str,
     pretrained_policy_path: str = "/home/sen/workspace/galaxea/GalaxeaManipSim/outputs/ACT/R1ProBlocksStackEasy-traj_aug/all-20251010214500/checkpoints/last/pretrained_model",
     dataset_repo_id: str = "galaxea/R1ProBlocksStackEasy/normal",
-    target_controller_type: str = "bimanual_relaxed_ik",
+    target_controller_type: str = "bimanual_joint_position",
     device: str = "cuda",
     headless: bool = True,
     num_evaluations: int = 100,

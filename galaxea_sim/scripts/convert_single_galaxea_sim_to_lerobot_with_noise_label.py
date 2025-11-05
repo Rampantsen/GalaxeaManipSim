@@ -26,14 +26,15 @@ def main(
     use_video: bool = False,
     push_to_hub: bool = False
 ):
-    output_path = HF_LEROBOT_HOME / REPO_PREFIX / env_name
+    repo_id = f"{REPO_PREFIX}/{env_name}/{feature}"
+    output_path = HF_LEROBOT_HOME / REPO_PREFIX / env_name /feature
     if output_path.exists():
         shutil.rmtree(output_path)
     shape = (224, 224, 3)  # Resize images to 224x224
     arm_dof = 7 if (robot == 'r1_pro' or use_eef) else 6
     
     dataset = LeRobotDataset.create(
-        repo_id=f"{REPO_PREFIX}/{output_path.name}",
+        repo_id=repo_id,
         robot_type=robot,
         fps=15,
         features={

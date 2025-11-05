@@ -9,7 +9,6 @@ import tyro
 from loguru import logger
 from pathlib import Path
 
-import galaxea_sim.envs
 from galaxea_sim.envs.base.bimanual_manipulation import BimanualManipulationEnv
 from galaxea_sim.planners.bimanual import BimanualPlanner
 from galaxea_sim.utils.data_utils import save_dict_list_to_hdf5, save_dict_list_to_json
@@ -120,29 +119,9 @@ def main(
                 verbose=False,
             )
             if actions is not None:
-                for action in actions:
+                for i, action in enumerate(actions):
                     num_steps += 1
                     obs, _, _, _, info = env.step(action)
-
-                    # 在关节控制模式下补充末端位姿指令信息，方便后续直接使用eepose数据
-                    upper_obs = obs.get("upper_body_observations", {})
-                    upper_action = obs.get("upper_body_action_dict", {})
-
-                    if isinstance(upper_action, dict) and isinstance(upper_obs, dict):
-                        left_pose = upper_obs.get("left_arm_ee_pose")
-                        right_pose = upper_obs.get("right_arm_ee_pose")
-
-                        if (
-                            left_pose is not None
-                            and "left_arm_ee_pose_cmd" not in upper_action
-                        ):
-                            upper_action["left_arm_ee_pose_cmd"] = left_pose.copy()
-
-                        if (
-                            right_pose is not None
-                            and "right_arm_ee_pose_cmd" not in upper_action
-                        ):
-                            upper_action["right_arm_ee_pose_cmd"] = right_pose.copy()
 
                     # 添加replan噪声标记（保存所有数据，在读取时决定是否使用）
                     obs["is_replan_noise"] = is_replan_noise

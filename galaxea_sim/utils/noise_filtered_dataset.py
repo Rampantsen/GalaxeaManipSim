@@ -70,10 +70,20 @@ class NoiseFilteredLeRobotDataset(Dataset):
     def _build_valid_indices(self) -> List[int]:
         """构建有效帧的索引列表（非噪声帧）"""
         valid_indices = []
+        total_frames = len(self.base_dataset)
+        
+        logger.info(f"开始扫描数据集构建有效索引，总帧数: {total_frames}")
+        
+        # 每 1000 帧打印一次进度
+        progress_interval = max(1000, total_frames // 20)
         
         # 遍历数据集，找出所有非噪声帧的索引
-        for idx in range(len(self.base_dataset)):
+        for idx in range(total_frames):
             try:
+                # 显示进度
+                if idx % progress_interval == 0 and idx > 0:
+                    logger.info(f"  扫描进度: {idx}/{total_frames} ({idx/total_frames*100:.1f}%)")
+                
                 sample = self.base_dataset[idx]
                 
                 # 检查是否有噪声标记
@@ -98,6 +108,8 @@ class NoiseFilteredLeRobotDataset(Dataset):
             except Exception as e:
                 logger.warning(f"处理索引 {idx} 时出错: {e}，将其标记为有效帧")
                 valid_indices.append(idx)
+        
+        logger.info(f"✅ 索引构建完成")
         
         return valid_indices
     
