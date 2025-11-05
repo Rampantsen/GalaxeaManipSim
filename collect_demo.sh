@@ -54,12 +54,14 @@ python -m galaxea_sim.scripts.collect_demos \
   --num-demos "$NUM_DEMOS" \
   --feature "$FEATURE" \
   --seed "$SEED" \
-  --table_type "$TABLE_TYPE"
-# 2️⃣ 回放 demonstrations
-python -m galaxea_sim.scripts.replay_demos \
-  --env-name "$ENV_NAME" \
-  --num-demos "$((NUM_DEMOS))" \
-  --feature "$FEATURE" \
-  --table_type "$TABLE_TYPE"\
+  --table_type "$TABLE_TYPE" \
+  --obs_mode image 
+
+
+# python -m galaxea_sim.scripts.replay_demos \
+#   --env-name "$ENV_NAME" \
+#   --num-demos "$((NUM_DEMOS-100))" \
+#   --feature "$FEATURE" \
+#   --table_type "$TABLE_TYPE" \
 
 echo "✅ Finished!"
