@@ -1,0 +1,42 @@
+name: galaxea_all_true
+
+# 图像和状态形状配置
+image_shape: &image_shape [9, 480, 640]  # 根据相机数量调整通道数
+shape_meta: &shape_meta
+  obs:
+    image:
+      shape: *image_shape
+      type: rgb
+    state:
+      shape: [16]
+      type: low_dim
+  action:
+    shape: [16]
+
+# 数据集配置
+dataset:
+  _target_: galaxea_sim.utils.dp_noise_filtered_dataset.GalaxeaImageDataset
+  zarr_path: datasets_diffusion_policy/all_true_with_noise.zarr
+  horizon: ${horizon}
+  pad_before: ${eval:'${n_obs_steps}-1'}
+  pad_after: ${eval:'${n_action_steps}-1'}
+  seed: 42
+  val_ratio: 0.1
+  max_train_episodes: null
+  filter_noise: true  # 是否过滤噪声
+
+# 环境运行器（占位）
+env_runner:
+  _target_: diffusion_policy.env_runner.base_image_runner.BaseImageRunner
+  n_train: 0
+  n_train_vis: 0
+  train_start_seed: 0
+  n_test: 0
+  n_test_vis: 0
+  test_start_seed: 0
+  max_steps: 300
+  n_obs_steps: ${n_obs_steps}
+  n_action_steps: ${n_action_steps}
+  fps: 10
+  past_action: ${past_action_visible}
+  n_envs: null

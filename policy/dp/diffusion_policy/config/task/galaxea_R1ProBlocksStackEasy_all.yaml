@@ -1,0 +1,37 @@
+name: galaxea_R1ProBlocksStackEasy_all
+
+# 图像和状态形状配置（三相机）
+image_shape: &image_shape [3, 224, 224]  # 每个相机都是3通道
+shape_meta: &shape_meta
+  obs:
+    img_head:  # 头部相机
+      shape: *image_shape
+      type: rgb
+    img_left:  # 左手相机
+      shape: *image_shape
+      type: rgb
+    img_right:  # 右手相机
+      shape: *image_shape
+      type: rgb
+    state:
+      shape: [16]
+      type: low_dim
+  action:
+    shape: [16]
+
+# 数据集配置
+dataset:
+  _target_: galaxea_sim.utils.dp_noise_filtered_dataset.GalaxeaImageDataset
+  zarr_path: ../../datasets_diffusion_policy/R1ProBlocksStackEasy_all_with_noise.zarr  # 相对于policy/dp目录
+  horizon: ${horizon}
+  pad_before: ${eval:'${n_obs_steps}-1'}
+  pad_after: ${eval:'${n_action_steps}-1'}
+  seed: 42
+  val_ratio: 0.1
+  max_train_episodes: null
+  filter_noise: true  # 是否过滤噪声
+
+# 环境运行器（占位，不用于评估）
+env_runner:
+  _target_: diffusion_policy.env_runner.base_image_runner.BaseImageRunner
+  output_dir: null

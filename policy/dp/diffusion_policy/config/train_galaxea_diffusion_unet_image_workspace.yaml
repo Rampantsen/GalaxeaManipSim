@@ -1,0 +1,175 @@
+defaults:
+  - task: galaxea_image
+  - _self_
+
+name: train_galaxea_diffusion_unet_image
+
+_target_: diffusion_policy.workspace.train_diffusion_unet_image_workspace.TrainDiffusionUnetImageWorkspace
+
+# 任务参数
+task_name: ${task.name}
+shape_meta: ${task.shape_meta}
+exp_name: "default"
+
+# 超参数
+# 15Hz控制频率下的优化设置
+horizon: 16  # 总时间窗口: 1.07秒 @ 15Hz（原版步数，简单稳定）
+n_obs_steps: 2  # 观测历史: 0.13秒 @ 15Hz
+n_action_steps: 8  # 动作预测: 0.53秒 @ 15Hz
+n_latency_steps: 0
+# 备选方案（时间对齐）:
+# horizon: 24  # 1.6秒 @ 15Hz
+# n_action_steps: 12  # 0.8秒 @ 15Hz
+# n_obs_steps: 3  # 0.2秒 @ 15Hz
+past_action_visible: False
+keypoint_visible_rate: 1.0
+obs_as_global_cond: True
+
+# 策略模型配置
+policy:
+  _target_: diffusion_policy.policy.diffusion_unet_image_policy.DiffusionUnetImagePolicy
+  shape_meta: ${shape_meta}
+  
+  # 噪声调度器
+  noise_scheduler:
+    _target_: diffusers.DDPMScheduler
+    num_train_timesteps: 100
+    beta_start: 0.0001
+    beta_end: 0.02
+    beta_schedule: squaredcos_cap_v2
+    variance_type: fixed_small
+    clip_sample: True
+    prediction_type: epsilon
+  
+  # 观测编码器
+  obs_encoder:
+    _target_: diffusion_policy.model.vision.multi_image_obs_encoder.MultiImageObsEncoder
+    shape_meta: ${shape_meta}
+    rgb_model:
+      _target_: diffusion_policy.model.vision.model_getter.get_resnet
+      name: resnet18
+      weights: IMAGENET1K_V1
+    resize_shape: null
+    # 多相机统一crop配置
+    crop_shape: [160, 160]  # 所有相机使用相同的裁剪大小
+    random_crop: True  # 随机裁剪增加数据多样性
+    use_group_norm: True
+    share_rgb_model: False  # 每个相机使用独立的编码器
+    imagenet_norm: True
+  
+  # horizon设置
+  horizon: ${horizon}
+  n_action_steps: ${n_action_steps}
+  n_obs_steps: ${n_obs_steps}
+  num_inference_steps: 100
+  obs_as_global_cond: ${obs_as_global_cond}
+  
+  # 扩散参数
+  diffusion_step_embed_dim: 256
+  down_dims: [256, 512, 1024]
+  kernel_size: 5
+  n_groups: 8
+  cond_predict_scale: True
+
+# EMA模型配置
+ema:
+  _target_: diffusion_policy.model.diffusion.ema_model.EMAModel
+  update_after_step: 0
+  inv_gamma: 1.0
+  power: 0.75
+  min_value: 0.0
+  max_value: 0.9999
+
+# 数据集和数据加载器
+# 三相机配置下内存占用较大，需要减少workers和batch_size
+dataset: ${task.dataset}
+dataloader:
+  batch_size: 16  # 减小batch_size以节省内存
+  num_workers: 2  # 减少workers避免OOM
+  shuffle: True
+  pin_memory: False  # 禁用pin_memory减少内存占用
+  persistent_workers: False
+  prefetch_factor: 2  # 预取因子
+
+val_dataloader:
+  batch_size: 16
+  num_workers: 2
+  shuffle: False
+  pin_memory: False
+  persistent_workers: False
+  prefetch_factor: 2
+
+# 优化器配置
+optimizer:
+  _target_: torch.optim.AdamW
+  lr: 1.0e-4
+  betas: [0.95, 0.999]
+  eps: 1.0e-8
+  weight_decay: 1.0e-6
+
+# 训练参数
+training:
+  device: "cuda:0"
+  seed: 42
+  debug: False
+  resume: True
+  # 最优化空间使用
+  lr_scheduler: cosine
+  lr_warmup_steps: 500
+  num_epochs: 3000
+  gradient_accumulate_every: 1
+  # 冻结编码器
+  freeze_encoder: False
+  # EMA
+  use_ema: True
+  ema_decay: 0.995
+  # 训练循环控制
+  rollout_every: 50
+  checkpoint_every: 50
+  val_every: 1
+  sample_every: 5
+  # 日志记录
+  log_every: 10
+  save_latest_every: 10
+  # 多GPU训练
+  multi_gpu: False
+  # tqdm更新间隔
+  tqdm_interval_sec: 1.0
+  # 最大训练步数（可选）
+  max_train_steps: null
+  max_val_steps: null
+
+# 日志记录
+logging:
+  project: galaxea_diffusion_policy
+  resume: True
+  mode: online
+  name: ${now:%Y.%m.%d-%H.%M.%S}_${name}_${task_name}
+  tags: ["${name}", "${task_name}", "${exp_name}"]
+  id: null
+  group: null
+
+# 检查点
+checkpoint:
+  topk:
+    monitor_key: test_mean_score
+    mode: max
+    k: 5
+    format_str: 'epoch={epoch:04d}-test_mean_score={test_mean_score:.3f}.ckpt'
+  save_last_ckpt: True
+  save_last_snapshot: False
+
+# 多进程训练
+multi_run:
+  run_dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_name}
+  wandb_name_base: ${now:%Y.%m.%d-%H.%M.%S}_${name}_${task_name}
+
+# Hydra配置
+hydra:
+  job:
+    override_dirname: ${name}
+  run:
+    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_name}
+  sweep:
+    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_name}
+    subdir: ${hydra.job.num}
