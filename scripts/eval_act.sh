@@ -46,7 +46,7 @@ for checkpoint_dir in $checkpoint_dirs; do
     python -m galaxea_sim.scripts.eval_lerobot_act_policy \
         --task R1ProBlocksStackEasy \
         --pretrained-policy-path "${checkpoint_dir}/pretrained_model" \
-        --target_controller_type bimanual_relaxed_ik \
+        --target_controller_type bimanual_joint_position \
         --dataset_repo_id "galaxea/R1ProBlocksStackEasy/${feature}" \
         --seed ${seed}\
         --save-video

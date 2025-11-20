@@ -14,7 +14,6 @@ REPO_PREFIX = "galaxea"
 def main(
     env_name: str,
     data_dir: str = "datasets",
-    table_type: Literal["red", "white"] = "white",
     feature: Literal["baseline", "grasp_sample_only", "replan", "all"] = "baseline",
     tag: Literal["collected", "replayed"] = "collected",
     robot: Literal['r1', 'r1_pro'] = 'r1_pro',
@@ -22,14 +21,15 @@ def main(
     use_video: bool = False,
     push_to_hub: bool = False
 ):
-    output_path = HF_LEROBOT_HOME / REPO_PREFIX / env_name
+    repo_id = f"{REPO_PREFIX}/{env_name}/{feature}"
+    output_path = HF_LEROBOT_HOME / repo_id
     if output_path.exists():
         shutil.rmtree(output_path)
     shape = (224, 224, 3)  # Resize images to 224x224
     arm_dof = 7 if (robot == 'r1_pro' or use_eef) else 6
     
     dataset = LeRobotDataset.create(
-        repo_id=f"{REPO_PREFIX}/{output_path.name}",
+        repo_id=repo_id,
         robot_type=robot,
         fps=15,
         features={
@@ -64,7 +64,7 @@ def main(
     )
     
     # 构建路径：datasets/{env_name}/{table_type}/{feature}/{tag}/*.h5
-    h5_dir = f"{data_dir}/{env_name}/{table_type}/{feature}/{tag}"
+    h5_dir = f"{data_dir}/{env_name}/{feature}/{tag}"
     h5_paths = glob.glob(f"{h5_dir}/*.h5", recursive=False)
     
     for h5_path in h5_paths:

@@ -18,9 +18,6 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# 运行数据转换
-#python -m galaxea_sim.scripts.convert_single_galaxea_sim_to_lerobot --robot r1_pro --env_name R1ProBlocksStackEasy --tag collected --feature $FEATURE
-
 # 等待数据转换完成
 wait
 
@@ -45,4 +42,6 @@ python ../lerobot/src/lerobot/scripts/train.py  \
     --save_checkpoint=true   \
     --log_freq=5000 \
     --policy.push_to_hub=false   \
-    --output_dir=./outputs/ACT/R1ProBlocksStackEasy/${DATASET}
+    --output_dir=./outputs/ACT/R1ProBlocksStackEasy/${DATASET}\
+    --config_path=./outputs/ACT/R1ProBlocksStackEasy/${DATASET}/checkpoints/last/pretrained_model/train_config.json \
+    --resume=true
