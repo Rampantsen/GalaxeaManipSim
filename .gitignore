@@ -66,6 +66,7 @@ tmp
 aloha_maniskill_sim
 notebooks
 datasets
+datasets_diffusion_policy
 robotwin_models
 outputs
 replay_results
