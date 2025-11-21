@@ -31,7 +31,17 @@ dataset:
   max_train_episodes: null
   filter_noise: true  # 是否过滤噪声
 
-# 环境运行器（占位，不用于评估）
+# 环境运行器（Gymnasium兼容版）
 env_runner:
-  _target_: diffusion_policy.env_runner.base_image_runner.BaseImageRunner
+  _target_: diffusion_policy.env_runner.galaxea_image_runner.GalaxeaImageRunner
   output_dir: null
+  env_name: R1ProBlocksStackEasy-v0
+  n_test: 5  # 每次评估5个episode
+  n_test_vis: 0  # 暂不支持视频录制
+  test_start_seed: 100000
+  max_steps: 300
+  n_obs_steps: ${n_obs_steps}
+  n_action_steps: ${n_action_steps}
+  fps: 15
+  past_action: False
+  tqdm_interval_sec: 1.0

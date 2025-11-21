@@ -1,31 +1,23 @@
 """
-Diffusion Policy 带噪声过滤的数据集
-
-功能：
-1. 保留噪声标签的数据
-2. 根据filter_noise参数决定训练行为：
-   - filter_noise=True: 噪声帧只作为obs历史，不作为action目标
-   - filter_noise=False: 正常训练，使用所有数据
-
-使用方法：
-    from galaxea_sim.utils.dp_noise_filtered_dataset import GalaxeaImageDataset
-    
-    dataset = GalaxeaImageDataset(
-        zarr_path='datasets_diffusion_policy/R1ProBlocksStackEasy_with_noise.zarr',
-        filter_noise=True,  # 是否过滤噪声action
-        horizon=16,
-    )
+Diffusion Policy的噪声过滤数据集 (修复版)
+直接继承原版的SequenceSampler，保证采样逻辑正确
 """
 
-from typing import Dict, Optional, List
-import torch
-import numpy as np
 import copy
+import numpy as np
+import torch
 import zarr
 from pathlib import Path
+from typing import Dict, Optional
 from loguru import logger
 
-# 导入Diffusion Policy的基础类
+# 添加policy/dp到path
+import sys
+workspace_root = Path(__file__).parent.parent.parent
+dp_path = workspace_root / "policy" / "dp"
+if str(dp_path) not in sys.path:
+    sys.path.insert(0, str(dp_path))
+
 try:
     from diffusion_policy.common.pytorch_util import dict_apply
     from diffusion_policy.common.replay_buffer import ReplayBuffer
@@ -34,18 +26,16 @@ try:
     from diffusion_policy.model.common.normalizer import LinearNormalizer
     from diffusion_policy.dataset.base_dataset import BaseImageDataset
     from diffusion_policy.common.normalize_util import get_image_range_normalizer
-except ImportError:
-    logger.warning("Diffusion Policy未安装，请先安装: pip install -e policy/dp")
-    BaseImageDataset = object
+except ImportError as e:
+    logger.error(f"导入Diffusion Policy模块失败: {e}")
+    logger.error(f"请确保已安装Diffusion Policy: pip install -e policy/dp")
+    raise
 
 
-class NoiseAwareSequenceSampler:
+class NoiseAwareSequenceSampler(SequenceSampler):
     """
-    噪声感知的序列采样器
-    
-    在filter_noise=True时：
-    - 只从非噪声帧中采样主帧（action target）
-    - 但历史窗口可以包含噪声帧（作为observation）
+    支持噪声过滤的序列采样器
+    继承自原版SequenceSampler，在索引构建完成后过滤噪声序列
     """
     
     def __init__(
@@ -58,85 +48,44 @@ class NoiseAwareSequenceSampler:
         filter_noise: bool = False,
         noise_labels: Optional[np.ndarray] = None
     ):
-        self.replay_buffer = replay_buffer
-        self.sequence_length = sequence_length
-        self.pad_before = pad_before
-        self.pad_after = pad_after
-        self.episode_mask = episode_mask
-        self.filter_noise = filter_noise
-        self.noise_labels = noise_labels
+        # 先调用父类初始化（构建所有索引）
+        super().__init__(
+            replay_buffer=replay_buffer,
+            sequence_length=sequence_length,
+            pad_before=pad_before,
+            pad_after=pad_after,
+            episode_mask=episode_mask
+        )
         
-        # 构建索引
-        self._build_indices()
+        # 如果需要过滤噪声，额外过滤
+        if filter_noise and noise_labels is not None:
+            self._filter_noise_indices(noise_labels)
     
-    def _build_indices(self):
-        """构建可采样的索引"""
-        episode_ends = self.replay_buffer.episode_ends
-        n_episodes = len(episode_ends)
+    def _filter_noise_indices(self, noise_labels: np.ndarray):
+        """过滤包含噪声的序列"""
+        original_count = len(self.indices)
+        filtered_indices = []
         
-        # 如果有episode mask，只使用指定的episodes
-        if self.episode_mask is not None:
-            episode_idxs = np.where(self.episode_mask)[0]
-        else:
-            episode_idxs = np.arange(n_episodes)
-        
-        # 收集所有有效的索引
-        indices = []
-        for ep_idx in episode_idxs:
-            start_idx = 0 if ep_idx == 0 else episode_ends[ep_idx - 1]
-            end_idx = episode_ends[ep_idx]
+        for i in range(len(self.indices)):
+            # 原版indices格式：[buffer_start_idx, buffer_end_idx, sample_start_idx, sample_end_idx]
+            buffer_start, buffer_end, _, _ = self.indices[i]
             
-            # 确保序列不会跨越episode边界
-            for idx in range(start_idx + self.pad_before, 
-                           end_idx - self.sequence_length - self.pad_after + 1):
-                # 如果需要过滤噪声，检查主帧是否为噪声
-                if self.filter_noise and self.noise_labels is not None:
-                    # 主帧是序列的最后一帧（action target）
-                    main_frame_idx = idx + self.sequence_length - 1
-                    if self.noise_labels[main_frame_idx]:
-                        continue  # 跳过噪声帧作为action target
-                
-                indices.append(idx)
+            # 检查序列中是否包含噪声帧
+            has_noise = np.any(noise_labels[buffer_start:buffer_end])
+            if not has_noise:
+                filtered_indices.append(self.indices[i])
         
-        self.indices = np.array(indices, dtype=np.int64)
-        logger.info(f"序列采样器: 总共 {len(self.indices)} 个有效序列")
+        self.indices = np.array(filtered_indices, dtype=self.indices.dtype)
+        filtered_count = original_count - len(self.indices)
         
-        if self.filter_noise and self.noise_labels is not None:
-            # 统计信息
-            total_possible = sum(episode_ends[i] - (0 if i == 0 else episode_ends[i-1]) 
-                               - self.sequence_length - self.pad_before - self.pad_after + 1
-                               for i in episode_idxs if (episode_ends[i] - (0 if i == 0 else episode_ends[i-1])) 
-                               >= self.sequence_length + self.pad_before + self.pad_after)
-            filtered_count = total_possible - len(self.indices)
-            logger.info(f"  - 过滤掉 {filtered_count} 个噪声序列 ({filtered_count/total_possible*100:.1f}%)")
-    
-    def __len__(self):
-        return len(self.indices)
-    
-    def sample_sequence(self, idx: int) -> Dict[str, np.ndarray]:
-        """采样一个序列"""
-        if idx >= len(self.indices):
-            raise IndexError(f"Index {idx} out of range for {len(self.indices)} sequences")
-        
-        start_idx = self.indices[idx] - self.pad_before
-        end_idx = self.indices[idx] + self.sequence_length + self.pad_after
-        
-        # 获取数据
-        result = {}
-        for key in self.replay_buffer.keys():
-            result[key] = self.replay_buffer[key][start_idx:end_idx]
-        
-        # 如果有噪声标签，也包含进去（用于调试）
-        if self.noise_labels is not None:
-            result['is_noise'] = self.noise_labels[start_idx:end_idx]
-        
-        return result
+        if filtered_count > 0:
+            logger.info(f"  - 过滤掉 {filtered_count} 个噪声序列 ({filtered_count/original_count*100:.1f}%)")
 
 
 class GalaxeaImageDataset(BaseImageDataset):
     """
     Galaxea的Diffusion Policy图像数据集
-    支持噪声过滤功能和多相机输入
+    支持噪声过滤功能和三相机输入
     """
     
     def __init__(
@@ -174,16 +123,7 @@ class GalaxeaImageDataset(BaseImageDataset):
         
         # 检查数据集中可用的键
         zarr_root = zarr.open(str(self.zarr_path), 'r')
-        available_keys = list(zarr_root['data'].keys())
-        
-        # 确保是多相机数据集
-        if 'img_head' not in available_keys:
-            raise ValueError(f"数据集必须包含多相机数据 (img_head, img_left, img_right)，当前键: {available_keys}")
-        
-        # 加载三个相机的数据
-        logger.info("加载多相机数据集")
-        self.replay_buffer = ReplayBuffer.copy_from_path(
-            zarr_path, keys=['img_head', 'img_left', 'img_right', 'state', 'action'])
+        self.replay_buffer = ReplayBuffer.create_from_path(zarr_path, mode='r')
         
         # 加载噪声标签（如果存在）
         self.noise_labels = None
@@ -193,30 +133,28 @@ class GalaxeaImageDataset(BaseImageDataset):
             total_count = len(self.noise_labels)
             logger.info(f"发现噪声标签: {noise_count}/{total_count} 帧为噪声 ({noise_count/total_count*100:.1f}%)")
             logger.info(f"噪声过滤: {'开启' if filter_noise else '关闭'}")
-        else:
-            logger.info("数据集中没有噪声标签")
-            if filter_noise:
-                logger.warning("filter_noise=True 但数据集中没有噪声标签，将使用所有数据")
         
-        # 划分训练/验证集
+        # 划分训练集和验证集
         val_mask = get_val_mask(
             n_episodes=self.replay_buffer.n_episodes,
             val_ratio=val_ratio,
-            seed=seed)
+            seed=seed
+        )
         train_mask = ~val_mask
         train_mask = downsample_mask(
             mask=train_mask,
             max_n=max_train_episodes,
-            seed=seed)
+            seed=seed
+        )
         
-        # 创建采样器
+        # 创建采样器（使用噪声感知版本）
         self.sampler = NoiseAwareSequenceSampler(
             replay_buffer=self.replay_buffer,
             sequence_length=horizon,
             pad_before=pad_before,
             pad_after=pad_after,
             episode_mask=train_mask,
-            filter_noise=filter_noise and self.noise_labels is not None,
+            filter_noise=filter_noise,
             noise_labels=self.noise_labels
         )
         
@@ -242,27 +180,36 @@ class GalaxeaImageDataset(BaseImageDataset):
             pad_before=self.pad_before,
             pad_after=self.pad_after,
             episode_mask=~self.train_mask,
-            filter_noise=self.filter_noise and self.noise_labels is not None,
+            filter_noise=self.filter_noise,
             noise_labels=self.noise_labels
         )
         val_set.train_mask = ~self.train_mask
         return val_set
     
     def get_normalizer(self, mode='limits', **kwargs):
-        """获取数据归一化器"""
-        data = {
-            'action': self.replay_buffer['action'],
-            'state': self.replay_buffer['state']
-        }
-        
-        # 如果过滤噪声，只使用非噪声帧计算统计量
+        """
+        获取数据归一化器
+        参考原版实现：直接传递zarr数组或先读取后过滤
+        """
         if self.filter_noise and self.noise_labels is not None:
+            # 需要过滤噪声：先读取数据到内存再过滤
+            # 注意：这里只读取state和action（~2.5MB），不读取图像（10GB）
+            logger.info("读取state和action数据用于归一化计算...")
+            all_actions = self.replay_buffer['action'][:]
+            all_states = self.replay_buffer['state'][:]
+            
             valid_mask = ~self.noise_labels
             data = {
-                'action': self.replay_buffer['action'][valid_mask],
-                'state': self.replay_buffer['state'][valid_mask]
+                'action': all_actions[valid_mask],
+                'state': all_states[valid_mask]
             }
             logger.info(f"使用 {np.sum(valid_mask)} 个非噪声帧计算归一化统计")
+        else:
+            # 不过滤噪声：直接传递zarr数组引用（参考原版）
+            data = {
+                'action': self.replay_buffer['action'],  # zarr数组引用
+                'state': self.replay_buffer['state']     # zarr数组引用
+            }
         
         normalizer = LinearNormalizer()
         normalizer.fit(data=data, last_n_dims=1, mode=mode, **kwargs)
@@ -276,14 +223,15 @@ class GalaxeaImageDataset(BaseImageDataset):
     
     def get_all_actions(self) -> torch.Tensor:
         """获取所有动作（用于某些算法）"""
-        actions = self.replay_buffer['action']
+        # 先读取所有动作到内存
+        all_actions = self.replay_buffer['action'][:]
         
         # 如果过滤噪声，只返回非噪声帧的动作
         if self.filter_noise and self.noise_labels is not None:
             valid_mask = ~self.noise_labels
-            actions = actions[valid_mask]
+            all_actions = all_actions[valid_mask]
         
-        return torch.from_numpy(actions)
+        return torch.from_numpy(all_actions)
     
     def __len__(self) -> int:
         return len(self.sampler)
@@ -297,6 +245,7 @@ class GalaxeaImageDataset(BaseImageDataset):
             - obs: 包含图像和state的观测字典
             - action: 动作序列
         """
+        # 使用父类的sample_sequence（保证返回固定长度）
         sample = self.sampler.sample_sequence(idx)
         
         # 处理三个相机的图像
@@ -319,3 +268,4 @@ class GalaxeaImageDataset(BaseImageDataset):
         torch_data = dict_apply(data, torch.from_numpy)
         
         return torch_data
+

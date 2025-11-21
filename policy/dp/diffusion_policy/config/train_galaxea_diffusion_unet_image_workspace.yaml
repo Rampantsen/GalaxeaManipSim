@@ -124,7 +124,7 @@ training:
   use_ema: True
   ema_decay: 0.995
   # 训练循环控制
-  rollout_every: 50
+  rollout_every: 50  # 每50个epoch评估一次
   checkpoint_every: 50
   val_every: 1
   sample_every: 5
@@ -152,10 +152,10 @@ logging:
 # 检查点
 checkpoint:
   topk:
-    monitor_key: test_mean_score
-    mode: max
+    monitor_key: test/mean_score  # 使用环境评估分数
+    mode: max  # 分数越高越好
     k: 5
-    format_str: 'epoch={epoch:04d}-test_mean_score={test_mean_score:.3f}.ckpt'
+    format_str: 'epoch={epoch:04d}-score={test/mean_score:.3f}.ckpt'
   save_last_ckpt: True
   save_last_snapshot: False
 

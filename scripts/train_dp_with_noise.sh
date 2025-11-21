@@ -98,10 +98,20 @@ dataset:
   max_train_episodes: null
   filter_noise: ${FILTER_NOISE}  # 是否过滤噪声
 
-# 环境运行器（占位，不用于评估）
+# 环境运行器（按照DP标准结构组织）
 env_runner:
-  _target_: diffusion_policy.env_runner.base_image_runner.BaseImageRunner
+  _target_: diffusion_policy.env_runner.galaxea_image_runner.GalaxeaImageRunner
   output_dir: null
+  env_name: ${TASK_NAME}-v0
+  n_test: 5  # 每次评估5个episode
+  n_test_vis: 0  # 暂不支持视频录制
+  test_start_seed: 100000
+  max_steps: 300
+  n_obs_steps: \${n_obs_steps}
+  n_action_steps: \${n_action_steps}
+  fps: 15
+  past_action: False
+  tqdm_interval_sec: 1.0
 EOF
 echo "✅ 配置文件创建完成: ${TASK_CONFIG}"
 
@@ -125,7 +135,7 @@ echo "[3/3] 启动训练..."
 echo ""
 
 # 进入目录并开始训练
-# 注意：batch_size=16, num_workers=2 已在配置文件中设置，无需覆盖
+# 注意：每50个epoch会在Galaxea环境中评估策略
 cd policy/dp && python train.py \
   --config-name=train_galaxea_diffusion_unet_image_workspace \
   task=galaxea_${TASK_NAME}_${MODE} \
